@@ -135,10 +135,10 @@ def analyze_file(
     if not path.is_file():
         raise ValueError(f"Not a regular file: {path}")
 
-    file_size = path.stat().st_size
     max_file_size_bytes = max_file_size_mb * BYTES_PER_MIB
+    initial_size = path.stat().st_size
 
-    if file_size > max_file_size_bytes:
+    if initial_size > max_file_size_bytes:
         raise ValueError(
             f"File exceeds the maximum allowed size of {max_file_size_mb} MiB: {path}"
         )
@@ -148,9 +148,18 @@ def analyze_file(
     strings: list[str] = []
     current_string = bytearray()
     header = b""
+    bytes_read = 0
 
     with path.open("rb") as file_handle:
         while chunk := file_handle.read(CHUNK_SIZE):
+            bytes_read += len(chunk)
+
+            if bytes_read > max_file_size_bytes:
+                raise ValueError(
+                    f"File exceeds the maximum allowed size of "
+                    f"{max_file_size_mb} MiB: {path}"
+                )
+
             if not header:
                 header = chunk[:16]
 
@@ -179,10 +188,10 @@ def analyze_file(
         path=str(path.resolve()),
         name=path.name,
         extension=path.suffix.lower(),
-        size_bytes=file_size,
+        size_bytes=bytes_read,
         sha256=sha256.hexdigest(),
         signature=_signature_hint(header),
-        entropy_bits_per_byte=round(_entropy(byte_counts, file_size), 6),
+        entropy_bits_per_byte=round(_entropy(byte_counts, bytes_read), 6),
         printable_strings=strings,
         pe_metadata=_extract_pe_metadata(path),
     )

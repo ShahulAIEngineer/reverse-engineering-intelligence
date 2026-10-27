@@ -1,5 +1,7 @@
 
 import hashlib
+import struct
+from pathlib import Path
 
 import pytest
 
@@ -134,7 +136,6 @@ def test_detects_signature_independently_of_extension(tmp_path):
     assert result.extension == ".txt"
     assert result.signature == "ELF executable/object"
 
-import struct
 
 
 def create_test_pe(
@@ -254,3 +255,44 @@ def test_truncated_pe_optional_header_has_no_metadata(tmp_path):
 
     assert result.pe_metadata is None
 
+def test_analyze_file_rejects_file_that_grows_during_read(tmp_path, monkeypatch):
+    """Reject a file that grows beyond the configured limit during reading."""
+    sample = tmp_path / "growing.bin"
+    sample.write_bytes(b"A" * 100)
+
+    original_open = Path.open
+
+    class GrowingReader:
+        def __init__(self, handle):
+            self.handle = handle
+            self.grown = False
+
+        def __enter__(self):
+            self.handle.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+        def read(self, size=-1):
+            data = self.handle.read(size)
+
+            if size == 1024 * 1024 and data and not self.grown:
+                self.grown = True
+                with original_open(sample, "ab") as writer:
+                    writer.write(b"B" * (1024 * 1024))
+
+            return data
+
+    def open_with_growth(path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+
+        if path == sample and args and args[0] == "rb":
+            return GrowingReader(handle)
+
+        return handle
+
+    monkeypatch.setattr(Path, "open", open_with_growth)
+
+    with pytest.raises(ValueError, match="maximum allowed size"):
+        analyze_file(sample, max_file_size_mb=1)

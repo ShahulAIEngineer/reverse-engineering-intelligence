@@ -5,8 +5,8 @@ This file contains only a minimal artificial header for testing metadata
 parsing. It is not a functional Windows executable.
 """
 
-from pathlib import Path
 import struct
+from pathlib import Path
 
 OUTPUT = Path(__file__).parent / "fixtures" / "synthetic_pe.bin"
 

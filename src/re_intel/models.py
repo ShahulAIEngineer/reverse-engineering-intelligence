@@ -1,6 +1,16 @@
+
 """Validated data models used by the analyzer and CLI."""
 
 from pydantic import BaseModel, Field
+
+
+class PEMetadata(BaseModel):
+    """Basic metadata parsed from a Windows PE header."""
+
+    machine: str = Field(min_length=1)
+    section_count: int = Field(ge=0)
+    is_dll: bool
+    is_executable: bool
 
 
 class FileAnalysisResult(BaseModel):
@@ -14,3 +24,4 @@ class FileAnalysisResult(BaseModel):
     signature: str
     entropy_bits_per_byte: float = Field(ge=0.0, le=8.0)
     printable_strings: list[str] = Field(default_factory=list)
+    pe_metadata: PEMetadata | None = None

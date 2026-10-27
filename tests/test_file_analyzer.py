@@ -133,3 +133,78 @@ def test_detects_signature_independently_of_extension(tmp_path):
 
     assert result.extension == ".txt"
     assert result.signature == "ELF executable/object"
+
+import struct
+
+
+def create_test_pe(
+    path,
+    *,
+    machine=0x8664,
+    characteristics=0x0002,
+    section_count=3,
+):
+    """Create a minimal synthetic PE header for testing."""
+    data = bytearray(256)
+    data[:2] = b"MZ"
+
+    pe_offset = 128
+    struct.pack_into("<I", data, 0x3C, pe_offset)
+    data[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+
+    struct.pack_into(
+        "<HHIIIHH",
+        data,
+        pe_offset + 4,
+        machine,
+        section_count,
+        0,
+        0,
+        0,
+        0,
+        characteristics,
+    )
+
+    path.write_bytes(data)
+
+
+def test_extracts_x64_pe_metadata(tmp_path):
+    sample = tmp_path / "sample.exe"
+    create_test_pe(sample, machine=0x8664, section_count=4)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.machine == "x64"
+    assert result.pe_metadata.section_count == 4
+    assert result.pe_metadata.is_executable is True
+    assert result.pe_metadata.is_dll is False
+
+
+def test_extracts_x86_dll_metadata(tmp_path):
+    sample = tmp_path / "sample.dll"
+    create_test_pe(
+        sample,
+        machine=0x014C,
+        characteristics=0x2000,
+    )
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.machine == "x86"
+    assert result.pe_metadata.is_dll is True
+    assert result.pe_metadata.is_executable is False
+
+
+def test_malformed_pe_header_has_no_pe_metadata(tmp_path):
+    sample = tmp_path / "malformed.exe"
+    data = bytearray(80)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 0x7FFFFFFF)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.signature == "Windows PE/DOS executable header (signature hint)"
+    assert result.pe_metadata is None

@@ -1,87 +1,375 @@
-# Reverse Engineering Intelligence
 
-A safe, read-only static inspection toolkit for collecting basic file metadata and generating JSON reports. It does not execute, modify, unpack, or patch inspected files.
+<div align="center">
 
-## Features
+# 🔎 Reverse Engineering Intelligence
 
-- SHA-256 hashing using chunked reads
-- File size, extension, and basic file-signature identification
-- Printable ASCII string extraction from files
-- Shannon entropy estimate for basic triage
-- Validated Pydantic result models
-- JSON report output and a command-line interface
-- Automated tests, Ruff checks, and GitHub Actions CI
+### Turn unknown files into structured intelligence.
 
-## Requirements
+**Inspect. Fingerprint. Investigate. Understand.**
 
-- Python 3.11+
-- Windows, macOS, or Linux
+A Python-powered, read-only static file analysis toolkit built to help security learners and developers inspect files, identify basic file signatures, extract printable strings, estimate entropy, and examine Windows PE headers — without executing or modifying the files being inspected.
 
-## Setup (Windows CMD)
+[![Python CI](https://github.com/ShahulAIEngineer/reverse-engineering-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/ShahulAIEngineer/reverse-engineering-intelligence/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
+![Analysis](https://img.shields.io/badge/Analysis-Read--Only-success)
+![License](https://img.shields.io/badge/License-See%20Repository-lightgrey)
 
-Open a terminal in the project folder and run:
+[Explore the Repository](https://github.com/ShahulAIEngineer/reverse-engineering-intelligence) · [View CI Results](https://github.com/ShahulAIEngineer/reverse-engineering-intelligence/actions)
+
+</div>
+
+---
+
+## 🕵️ The Investigation Begins
+
+You receive a file.
+
+Its name tells you almost nothing. Its extension might be misleading. You don't want to execute it just to learn what it contains.
+
+**Where do you begin?**
+
+Reverse Engineering Intelligence approaches the problem as a structured investigation. It reads the file, calculates a cryptographic fingerprint, looks for recognizable signatures, extracts printable ASCII strings, measures byte-level entropy, and checks for basic Windows PE header metadata.
+
+The result is a structured report you can inspect in your terminal or save as JSON.
+
+> **The mission:** collect useful evidence first. Make conclusions only when the evidence supports them.
+
+## 🗺️ The Investigation Workflow
+
+Follow the file from intake to report.
+
+```mermaid
+flowchart TD
+    A(["📁 File received"]) --> B["Validate input path"]
+    B --> C["Read file in chunks"]
+    C --> D["Calculate SHA-256"]
+    C --> E["Identify signature hints"]
+    C --> F["Extract printable ASCII strings"]
+    C --> G["Calculate Shannon entropy"]
+    C --> H["Inspect Windows PE header"]
+    D --> I["Build validated result"]
+    E --> I
+    F --> I
+    G --> I
+    H --> I
+    I --> J{"Choose output"}
+    J --> K["📊 Human-readable summary"]
+    J --> L["📄 JSON report"]
+    J --> M["🔤 String listing"]
+    K --> N(["Investigation complete"])
+    L --> N
+    M --> N
+
+    classDef start fill:#173b33,stroke:#3ca58a,color:#ffffff
+    classDef process fill:#172c45,stroke:#4c8eda,color:#ffffff
+    classDef output fill:#45341b,stroke:#d6a64d,color:#ffffff
+    class A,N start
+    class B,C,D,E,F,G,H,I process
+    class J,K,L,M output
+```
+
+### What happens at each stage?
+
+| Stage | Investigation task | Result |
+|---|---|---|
+| 01 · Intake | Validate the file path | Confirm the target is a regular file |
+| 02 · Fingerprint | Calculate SHA-256 | A reproducible file fingerprint |
+| 03 · Identify | Check known byte signatures | A heuristic format hint |
+| 04 · Extract | Find printable ASCII sequences | Potentially useful strings |
+| 05 · Measure | Calculate Shannon entropy | A rough byte-distribution indicator |
+| 06 · Examine | Inspect basic PE headers | Architecture, section count, executable and DLL flags |
+| 07 · Report | Validate and serialize results | Terminal output or JSON |
+
+---
+
+## ⚡ Features at a Glance
+
+<table>
+<tr>
+<td width="50%">
+
+### 🔐 File fingerprinting
+
+Calculates SHA-256 using chunked reads. Use the hash to identify a file consistently across reports.
+
+</td>
+<td width="50%">
+
+### 🧭 Signature identification
+
+Recognizes selected signatures associated with formats such as PE, ELF, PNG, JPEG, GIF, ZIP, and PDF.
+
+</td>
+</tr>
+<tr>
+<td>
+
+### 🔤 Printable string extraction
+
+Extracts printable ASCII sequences with configurable minimum length and a maximum result count.
+
+</td>
+<td>
+
+### 📈 Entropy estimation
+
+Calculates Shannon entropy in bits per byte, from 0 to 8, as one signal for further investigation.
+
+</td>
+</tr>
+<tr>
+<td>
+
+### 🪟 Windows PE inspection
+
+Reads basic PE/COFF header fields, including machine architecture, section count, executable characteristics, and DLL status.
+
+</td>
+<td>
+
+### 📄 Structured reporting
+
+Uses Pydantic models and JSON serialization to make analysis results easier to inspect and integrate into later workflows.
+
+</td>
+</tr>
+<tr>
+<td>
+
+### 🧪 Automated quality checks
+
+Uses pytest for regression tests and Ruff for linting, with GitHub Actions for continuous integration.
+
+</td>
+<td>
+
+### 🛡️ Read-only design
+
+Does not intentionally execute, modify, unpack, or patch the inspected file.
+
+</td>
+</tr>
+</table>
+
+---
+
+## 🚀 Run Your First Investigation
+
+### 1. Prepare the environment
+
+**Requirements:** Python 3.11 or later, Git, and Windows, macOS, or Linux.
+
+On Windows, open Command Prompt in the project directory:
 
 ```cmd
 python -m venv .venv
 .venv\Scripts\activate
 python -m pip install -e ".[dev]"
-python -m pytest -v
-python -m ruff check src tests
 ```
 
-If PowerShell is used instead of CMD, activate with:
+For PowerShell activation, use:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-## Usage
+### 2. Choose your investigation mode
 
-Inspect a file and print a JSON report:
+<details>
+<summary><strong>📊 Mode 1 — Human-readable summary</strong></summary>
 
-```cmd
-re-intel inspect path\to\sample.bin
-```
-
-Write the report to a JSON file:
+Get a quick overview of a file.
 
 ```cmd
-re-intel inspect path\to\sample.bin --output report.json
+re-intel summary sample.txt
 ```
 
-Extract printable ASCII strings (default minimum length: 5):
+The summary displays the file path, size, extension, SHA-256, signature hint, entropy, number of extracted strings, and PE metadata when detected.
+
+</details>
+
+<details>
+<summary><strong>📄 Mode 2 — Detailed JSON report</strong></summary>
+
+Generate structured output for inspection, archiving, or downstream processing.
 
 ```cmd
-re-intel strings path\to\sample.bin --min-length 5
+re-intel inspect sample.txt
 ```
 
-The tool performs read-only analysis. Only use it on files you own or are authorized to inspect. Treat extracted strings and file metadata as untrusted input.
+Save the report to a file:
 
-## Project structure
+```cmd
+re-intel inspect sample.txt --output report.json
+```
+
+A simplified example of the report structure:
+
+```json
+{
+  "name": "sample.exe",
+  "extension": ".exe",
+  "size_bytes": 4096,
+  "sha256": "example_hash_replaced_by_actual_output",
+  "signature": "Windows PE/DOS executable header (signature hint)",
+  "entropy_bits_per_byte": 6.8,
+  "printable_strings": [],
+  "pe_metadata": {
+    "machine": "x64",
+    "section_count": 3,
+    "is_dll": false,
+    "is_executable": true
+  }
+}
+```
+
+*Illustrative structure only. The values are examples, not results from a real executable.*
+
+</details>
+
+<details>
+<summary><strong>🔤 Mode 3 — Printable strings</strong></summary>
+
+Inspect readable ASCII sequences without opening the file in an editor.
+
+```cmd
+re-intel strings sample.txt
+```
+
+Set the minimum string length:
+
+```cmd
+re-intel strings sample.txt --min-length 8
+```
+
+Limit the number of extracted strings:
+
+```cmd
+re-intel strings sample.txt --max-strings 100
+```
+
+</details>
+
+---
+
+## 🧪 Quality Assurance
+
+The project includes automated tests for the core analysis workflow.
+
+Run the tests:
+
+```cmd
+python -m pytest -v
+```
+
+Check code quality:
+
+```cmd
+python -m ruff check src tests
+```
+
+Run both before committing changes. GitHub Actions runs the configured CI workflow on pushes and pull requests.
+
+**Current development milestone:** 20 local tests passed during PE analysis development, and the subsequent CLI update was reported as passing GitHub Actions. Rerun the commands above to verify the current working tree after future changes.
+
+---
+
+## 🏗️ Project Architecture
 
 ```text
 reverse-engineering-intelligence/
-├── .github/workflows/ci.yml
-├── docs/ARCHITECTURE.md
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+├── docs/
+│   └── ARCHITECTURE.md
 ├── examples/
-├── src/re_intel/
-│   ├── analyzers/file_analyzer.py
-│   ├── cli.py
-│   └── models.py
+├── src/
+│   └── re_intel/
+│       ├── analyzers/
+│       │   └── file_analyzer.py
+│       ├── cli.py
+│       └── models.py
 ├── tests/
-├── .gitignore
+│   ├── test_file_analyzer.py
+│   └── test_models.py
 ├── .env.example
+├── .gitignore
 ├── pyproject.toml
 └── README.md
 ```
 
-## Development checks
+### Under the hood
 
-```cmd
-python -m pytest -v
-python -m ruff check src tests
-```
+- **Python** — file reading, hashing, entropy calculations, and analysis logic.
+- **Pydantic** — validation of structured results and PE metadata.
+- **Rich** — readable terminal tables and messages.
+- **argparse** — command-line argument parsing.
+- **pytest** — automated tests.
+- **Ruff** — code-quality checks.
+- **GitHub Actions** — continuous integration.
 
-## Scope and limitations
+---
 
-This is a foundation for authorized static analysis and triage. File-signature detection is heuristic, ASCII string extraction does not decode every encoding, and entropy is only a rough indicator—not proof of encryption, compression, or maliciousness.
+## 🎯 Design Principles
+
+**Evidence before assumptions.** A filename or extension alone is not enough to establish a file's true format.
+
+**Read-only first.** The tool is designed to inspect files without intentionally executing or modifying them.
+
+**Structured results.** Analysis data should be easy to review, test, save, and extend.
+
+**Small, verifiable improvements.** New capabilities should be accompanied by tests and quality checks.
+
+---
+
+## ⚠️ Scope, Safety & Limitations
+
+This project is a **lightweight static inspection and triage toolkit**, not a complete reverse-engineering suite or malware detector.
+
+- File-signature matching is heuristic and does not fully validate a file format.
+- PE inspection reads selected header fields; it is not a complete PE parser.
+- A detected PE signature does not guarantee that the file is valid or safe.
+- ASCII extraction does not cover all Unicode strings, encodings, or binary structures.
+- High entropy does not prove that a file is encrypted, compressed, or malicious.
+- Read-only behavior is an application design goal, not a security sandbox. Do not assume the tool is immune to every malformed-file or resource-exhaustion risk.
+
+Only inspect files you own or have permission to analyze. Treat file contents and extracted strings as untrusted data.
+
+---
+
+## 🛣️ The Road Ahead
+
+Potential future milestones for this project:
+
+- [ ] Add stronger PE validation and optional-header details.
+- [ ] Add configurable report schemas and machine-readable analysis summaries.
+- [ ] Add more file-format fixtures and malformed-input tests.
+- [ ] Add explicit size limits and resource-use controls for large files.
+- [ ] Add reproducible sample reports and richer usage documentation.
+- [ ] Explore optional YARA integration for rule-based scanning.
+- [ ] Expand CI with supported Python-version coverage and security-focused tests.
+
+These are planned improvements, not features currently claimed as implemented.
+
+---
+
+## 👨‍💻 About This Project
+
+**Reverse Engineering Intelligence** is a hands-on Python project focused on static file inspection, structured reporting, testing, and software engineering practices.
+
+Built by **ShahulAIEngineer**.
+
+- **GitHub repository:** https://github.com/ShahulAIEngineer/reverse-engineering-intelligence
+- **Issues and improvements:** https://github.com/ShahulAIEngineer/reverse-engineering-intelligence/issues
+- **CI workflow:** https://github.com/ShahulAIEngineer/reverse-engineering-intelligence/actions
+
+If you're learning Python, static analysis, or software testing, explore the code, run the tests, and build on the foundation.
+
+<div align="center">
+
+### Every file leaves evidence. Learn to read it.
+
+**Inspect responsibly. Analyze carefully. Build continuously.**
+
+</div>

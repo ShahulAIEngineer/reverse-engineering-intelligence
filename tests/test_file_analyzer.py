@@ -208,3 +208,19 @@ def test_malformed_pe_header_has_no_pe_metadata(tmp_path):
 
     assert result.signature == "Windows PE/DOS executable header (signature hint)"
     assert result.pe_metadata is None
+
+def test_analyze_file_rejects_file_over_maximum_size(tmp_path):
+    sample = tmp_path / "large.bin"
+    sample.write_bytes(b"A" * (1024 * 1024 + 1))
+
+    with pytest.raises(ValueError, match="maximum allowed size"):
+        analyze_file(sample, max_file_size_mb=1)
+
+
+def test_analyze_file_rejects_invalid_max_file_size(tmp_path):
+    sample = tmp_path / "sample.bin"
+    sample.write_bytes(b"hello")
+
+    with pytest.raises(ValueError, match="max_file_size_mb"):
+        analyze_file(sample, max_file_size_mb=0)
+

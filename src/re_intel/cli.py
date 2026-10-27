@@ -9,7 +9,10 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from re_intel.analyzers.file_analyzer import analyze_file
+from re_intel.analyzers.file_analyzer import (
+    DEFAULT_MAX_FILE_SIZE_MB,
+    analyze_file,
+)
 
 console = Console()
 
@@ -21,6 +24,7 @@ def _inspect(args: argparse.Namespace) -> int:
             args.path,
             min_string_length=args.min_string_length,
             max_strings=args.max_strings,
+            max_file_size_mb=args.max_file_size_mb,
         )
     except (OSError, ValueError) as exc:
         console.print(f"[red]Analysis failed:[/red] {exc}")
@@ -51,6 +55,7 @@ def _strings(args: argparse.Namespace) -> int:
             args.path,
             min_string_length=args.min_length,
             max_strings=args.max_strings,
+            max_file_size_mb=args.max_file_size_mb,
         )
     except (OSError, ValueError) as exc:
         console.print(f"[red]Analysis failed:[/red] {exc}")
@@ -74,6 +79,7 @@ def _summary(args: argparse.Namespace) -> int:
             args.path,
             min_string_length=args.min_string_length,
             max_strings=args.max_strings,
+            max_file_size_mb=args.max_file_size_mb,
         )
     except (OSError, ValueError) as exc:
         console.print(f"[red]Analysis failed:[/red] {exc}")
@@ -151,6 +157,7 @@ def _batch(args: argparse.Namespace) -> int:
                 path,
                 min_string_length=args.min_string_length,
                 max_strings=args.max_strings,
+                max_file_size_mb=args.max_file_size_mb,
             )
             report["results"].append(result.model_dump())
             report["files_analyzed"] += 1
@@ -185,6 +192,20 @@ def _batch(args: argparse.Namespace) -> int:
     return 1 if report["files_failed"] else 0
 
 
+def _add_file_analysis_options(parser: argparse.ArgumentParser) -> None:
+    """Add shared analysis limits to a command parser."""
+    parser.add_argument("--max-strings", type=int, default=500)
+    parser.add_argument(
+        "--max-file-size-mb",
+        type=int,
+        default=DEFAULT_MAX_FILE_SIZE_MB,
+        help=(
+            "Maximum file size to analyze in MiB "
+            f"(default: {DEFAULT_MAX_FILE_SIZE_MB})."
+        ),
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(
@@ -203,7 +224,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inspect_parser.add_argument("--output", help="Optional path for the JSON report.")
     inspect_parser.add_argument("--min-string-length", type=int, default=5)
-    inspect_parser.add_argument("--max-strings", type=int, default=500)
+    _add_file_analysis_options(inspect_parser)
     inspect_parser.set_defaults(handler=_inspect)
 
     strings_parser = commands.add_parser(
@@ -215,7 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a file you are authorized to inspect.",
     )
     strings_parser.add_argument("--min-length", type=int, default=5)
-    strings_parser.add_argument("--max-strings", type=int, default=500)
+    _add_file_analysis_options(strings_parser)
     strings_parser.set_defaults(handler=_strings)
 
     summary_parser = commands.add_parser(
@@ -227,7 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a file you are authorized to inspect.",
     )
     summary_parser.add_argument("--min-string-length", type=int, default=5)
-    summary_parser.add_argument("--max-strings", type=int, default=500)
+    _add_file_analysis_options(summary_parser)
     summary_parser.set_defaults(handler=_summary)
 
     batch_parser = commands.add_parser(
@@ -249,7 +270,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include files in nested directories.",
     )
     batch_parser.add_argument("--min-string-length", type=int, default=5)
-    batch_parser.add_argument("--max-strings", type=int, default=500)
+    _add_file_analysis_options(batch_parser)
     batch_parser.set_defaults(handler=_batch)
 
     return parser
@@ -270,6 +291,10 @@ def main() -> None:
 
     if args.max_strings < 0:
         console.print("[red]Maximum strings cannot be negative.[/red]")
+        raise SystemExit(2)
+
+    if args.max_file_size_mb < 1:
+        console.print("[red]Maximum file size must be at least 1 MiB.[/red]")
         raise SystemExit(2)
 
     raise SystemExit(args.handler(args))

@@ -1,0 +1,28 @@
+{
+  "tool": "Reverse Engineering Intelligence",
+  "generated_at_utc": "2026-10-27T17:19:07.484871+00:00",
+  "directory": "D:\\reverse engineering\\reverse-engineering-intelligence\\examples\\fixtures",
+  "recursive": false,
+  "files_discovered": 1,
+  "files_analyzed": 1,
+  "files_failed": 0,
+  "results": [
+    {
+      "path": "D:\\reverse engineering\\reverse-engineering-intelligence\\examples\\fixtures\\synthetic_pe.bin",
+      "name": "synthetic_pe.bin",
+      "extension": ".bin",
+      "size_bytes": 512,
+      "sha256": "e88ba47868d4259ea3e4d0fd8ae579c2298249ce54ac45ba1cda33c2ba39db0f",
+      "signature": "Windows PE/DOS executable header (signature hint)",
+      "entropy_bits_per_byte": 0.20368190608732903,
+      "printable_strings": [],
+      "pe_metadata": {
+        "machine": "x64",
+        "section_count": 3,
+        "is_dll": false,
+        "is_executable": true
+      }
+    }
+  ],
+  "errors": []
+}

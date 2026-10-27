@@ -3,6 +3,7 @@
 
 import argparse
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from rich.console import Console
@@ -14,7 +15,7 @@ console = Console()
 
 
 def _inspect(args: argparse.Namespace) -> int:
-    """Analyze a file and output a JSON report."""
+    """Analyze one file and output a JSON report."""
     try:
         result = analyze_file(
             args.path,
@@ -25,11 +26,7 @@ def _inspect(args: argparse.Namespace) -> int:
         console.print(f"[red]Analysis failed:[/red] {exc}")
         return 2
 
-    rendered = json.dumps(
-        result.model_dump(),
-        indent=2,
-        ensure_ascii=False,
-    )
+    rendered = json.dumps(result.model_dump(), indent=2, ensure_ascii=False)
 
     if args.output:
         output_path = Path(args.output)
@@ -110,16 +107,91 @@ def _summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def _batch(args: argparse.Namespace) -> int:
+    """Analyze files in a directory and write a combined JSON report."""
+    root = Path(args.directory)
+
+    if not root.exists():
+        console.print(f"[red]Directory not found:[/red] {root}")
+        return 2
+    if not root.is_dir():
+        console.print(f"[red]Not a directory:[/red] {root}")
+        return 2
+
+    output_path = Path(args.output).resolve()
+    try:
+        candidates = root.rglob("*") if args.recursive else root.glob("*")
+        files = sorted(
+            (
+                path
+                for path in candidates
+                if path.is_file() and path.resolve() != output_path
+            ),
+            key=lambda path: str(path).casefold(),
+        )
+    except OSError as exc:
+        console.print(f"[red]Could not list directory:[/red] {exc}")
+        return 2
+
+    report = {
+        "tool": "Reverse Engineering Intelligence",
+        "generated_at_utc": datetime.now(UTC).isoformat(),
+        "directory": str(root.resolve()),
+        "recursive": args.recursive,
+        "files_discovered": len(files),
+        "files_analyzed": 0,
+        "files_failed": 0,
+        "results": [],
+        "errors": [],
+    }
+
+    for path in files:
+        try:
+            result = analyze_file(
+                path,
+                min_string_length=args.min_string_length,
+                max_strings=args.max_strings,
+            )
+            report["results"].append(result.model_dump())
+            report["files_analyzed"] += 1
+        except (OSError, ValueError) as exc:
+            report["errors"].append(
+                {
+                    "path": str(path.resolve()),
+                    "error": str(exc),
+                }
+            )
+            report["files_failed"] += 1
+
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        console.print(f"[red]Could not write batch report:[/red] {exc}")
+        return 2
+
+    table = Table(title="Batch Analysis Summary")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Count", justify="right")
+    table.add_row("Files discovered", str(report["files_discovered"]))
+    table.add_row("Files analyzed", str(report["files_analyzed"]))
+    table.add_row("Files failed", str(report["files_failed"]))
+    console.print(table)
+    console.print(f"[green]Batch report written to[/green] {output_path}")
+
+    return 1 if report["files_failed"] else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(
         prog="re-intel",
         description="Read-only static file inspection and triage.",
     )
-    commands = parser.add_subparsers(
-        dest="command",
-        required=True,
-    )
+    commands = parser.add_subparsers(dest="command", required=True)
 
     inspect_parser = commands.add_parser(
         "inspect",
@@ -129,20 +201,9 @@ def build_parser() -> argparse.ArgumentParser:
         "path",
         help="Path to a file you are authorized to inspect.",
     )
-    inspect_parser.add_argument(
-        "--output",
-        help="Optional path for the JSON report.",
-    )
-    inspect_parser.add_argument(
-        "--min-string-length",
-        type=int,
-        default=5,
-    )
-    inspect_parser.add_argument(
-        "--max-strings",
-        type=int,
-        default=500,
-    )
+    inspect_parser.add_argument("--output", help="Optional path for the JSON report.")
+    inspect_parser.add_argument("--min-string-length", type=int, default=5)
+    inspect_parser.add_argument("--max-strings", type=int, default=500)
     inspect_parser.set_defaults(handler=_inspect)
 
     strings_parser = commands.add_parser(
@@ -165,17 +226,31 @@ def build_parser() -> argparse.ArgumentParser:
         "path",
         help="Path to a file you are authorized to inspect.",
     )
-    summary_parser.add_argument(
-        "--min-string-length",
-        type=int,
-        default=5,
-    )
-    summary_parser.add_argument(
-        "--max-strings",
-        type=int,
-        default=500,
-    )
+    summary_parser.add_argument("--min-string-length", type=int, default=5)
+    summary_parser.add_argument("--max-strings", type=int, default=500)
     summary_parser.set_defaults(handler=_summary)
+
+    batch_parser = commands.add_parser(
+        "batch",
+        help="Analyze files in a directory and create one JSON report.",
+    )
+    batch_parser.add_argument(
+        "directory",
+        help="Directory containing files you are authorized to inspect.",
+    )
+    batch_parser.add_argument(
+        "--output",
+        required=True,
+        help="Path for the combined JSON report.",
+    )
+    batch_parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Include files in nested directories.",
+    )
+    batch_parser.add_argument("--min-string-length", type=int, default=5)
+    batch_parser.add_argument("--max-strings", type=int, default=500)
+    batch_parser.set_defaults(handler=_batch)
 
     return parser
 
@@ -189,11 +264,8 @@ def main() -> None:
         "min_string_length",
         getattr(args, "min_length", 1),
     )
-
     if min_length < 1:
-        console.print(
-            "[red]Minimum string length must be at least 1.[/red]"
-        )
+        console.print("[red]Minimum string length must be at least 1.[/red]")
         raise SystemExit(2)
 
     if args.max_strings < 0:

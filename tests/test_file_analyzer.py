@@ -224,3 +224,33 @@ def test_analyze_file_rejects_invalid_max_file_size(tmp_path):
     with pytest.raises(ValueError, match="max_file_size_mb"):
         analyze_file(sample, max_file_size_mb=0)
 
+def test_truncated_pe_optional_header_has_no_metadata(tmp_path):
+    """A PE with a truncated optional header should not yield metadata."""
+    sample = tmp_path / "truncated.exe"
+    data = bytearray(152)
+    data[:2] = b"MZ"
+
+    pe_offset = 128
+    struct.pack_into("<I", data, 0x3C, pe_offset)
+    data[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+
+    struct.pack_into(
+        "<HHIIIHH",
+        data,
+        pe_offset + 4,
+        0x8664,
+        3,
+        0,
+        0,
+        0,
+        32,
+        0x0002,
+    )
+
+    # The declared optional header is 32 bytes, but none are present.
+    sample.write_bytes(data[: pe_offset + 24])
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+

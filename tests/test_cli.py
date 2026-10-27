@@ -4,7 +4,15 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from re_intel.cli import main
+
+
+def invoke_cli(monkeypatch, arguments: list[str]) -> None:
+    """Run the CLI with supplied arguments."""
+    monkeypatch.setattr("sys.argv", ["re-intel", *arguments])
+    main()
 
 
 def test_batch_generates_json_report(
@@ -20,21 +28,13 @@ def test_batch_generates_json_report(
     )
     report_path = tmp_path / "reports" / "batch.json"
 
-    monkeypatch.setattr(
-        "sys.argv",
-        [
-            "re-intel",
-            "batch",
-            str(input_dir),
-            "--output",
-            str(report_path),
-        ],
-    )
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(
+            monkeypatch,
+            ["batch", str(input_dir), "--output", str(report_path)],
+        )
 
-    try:
-        main()
-    except SystemExit as exc:
-        assert exc.code == 0
+    assert exc_info.value.code == 0
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
 
@@ -52,24 +52,18 @@ def test_batch_rejects_missing_directory(
     """Batch analysis should return an error for a missing directory."""
     report_path = tmp_path / "batch.json"
 
-    monkeypatch.setattr(
-        "sys.argv",
-        [
-            "re-intel",
-            "batch",
-            str(tmp_path / "missing"),
-            "--output",
-            str(report_path),
-        ],
-    )
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(
+            monkeypatch,
+            [
+                "batch",
+                str(tmp_path / "missing"),
+                "--output",
+                str(report_path),
+            ],
+        )
 
-    try:
-        main()
-    except SystemExit as exc:
-        assert exc.code == 2
-    else:
-        raise AssertionError("Expected the CLI to exit with code 2")
-
+    assert exc_info.value.code == 2
     assert not report_path.exists()
 
 
@@ -91,25 +85,15 @@ def test_batch_records_file_analysis_errors(
             raise ValueError("Simulated analysis failure")
         raise AssertionError("Unexpected file passed to analyzer")
 
-    monkeypatch.setattr(
-        "re_intel.cli.analyze_file",
-        fake_analyze_file,
-    )
-    monkeypatch.setattr(
-        "sys.argv",
-        [
-            "re-intel",
-            "batch",
-            str(input_dir),
-            "--output",
-            str(report_path),
-        ],
-    )
+    monkeypatch.setattr("re_intel.cli.analyze_file", fake_analyze_file)
 
-    try:
-        main()
-    except SystemExit as exc:
-        assert exc.code == 1
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(
+            monkeypatch,
+            ["batch", str(input_dir), "--output", str(report_path)],
+        )
+
+    assert exc_info.value.code == 1
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
 
@@ -117,3 +101,53 @@ def test_batch_records_file_analysis_errors(
     assert report["files_analyzed"] == 0
     assert report["files_failed"] == 1
     assert report["errors"][0]["error"] == "Simulated analysis failure"
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["inspect", "strings", "summary", "batch"],
+)
+def test_cli_rejects_zero_file_size_limit(
+    tmp_path: Path,
+    monkeypatch,
+    command: str,
+) -> None:
+    """Every command should reject a zero MiB file-size limit."""
+    sample = tmp_path / "sample.txt"
+    sample.write_text("Harmless test content.", encoding="utf-8")
+
+    arguments = [command]
+
+    if command == "batch":
+        arguments.extend([str(tmp_path), "--output", str(tmp_path / "report.json")])
+    else:
+        arguments.append(str(sample))
+
+    arguments.extend(["--max-file-size-mb", "0"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(monkeypatch, arguments)
+
+    assert exc_info.value.code == 2
+
+
+def test_inspect_rejects_file_over_configured_size(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Inspect should reject a file exceeding its configured size limit."""
+    sample = tmp_path / "large.bin"
+    sample.write_bytes(b"A" * (1024 * 1024 + 1))
+
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(
+            monkeypatch,
+            [
+                "inspect",
+                str(sample),
+                "--max-file-size-mb",
+                "1",
+            ],
+        )
+
+    assert exc_info.value.code == 2

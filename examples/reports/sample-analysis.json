@@ -1,0 +1,13 @@
+{
+  "path": "D:\\reverse engineering\\reverse-engineering-intelligence\\sample.txt",
+  "name": "sample.txt",
+  "extension": ".txt",
+  "size_bytes": 47,
+  "sha256": "92f870034d489a147cc9831b9ff3d1438d2182605af3bcfb3861c2619ca6f440",
+  "signature": "Unknown / no recognized signature",
+  "entropy_bits_per_byte": 3.9372852672447682,
+  "printable_strings": [
+    "Hello from Reverse Engineering Intelligence. "
+  ],
+  "pe_metadata": null
+}

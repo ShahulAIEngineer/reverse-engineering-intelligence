@@ -18,6 +18,8 @@ htmlcov/
 
 # Local reports and samples
 reports/
+!examples/reports/
+!examples/reports/sample-analysis.json
 samples/
 *.log
 # Local test artifacts

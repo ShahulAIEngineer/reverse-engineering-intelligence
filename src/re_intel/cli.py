@@ -14,6 +14,7 @@ console = Console()
 
 
 def _inspect(args: argparse.Namespace) -> int:
+    """Analyze a file and output a JSON report."""
     try:
         result = analyze_file(
             args.path,
@@ -24,16 +25,21 @@ def _inspect(args: argparse.Namespace) -> int:
         console.print(f"[red]Analysis failed:[/red] {exc}")
         return 2
 
-    payload = result.model_dump()
-    rendered = json.dumps(payload, indent=2, ensure_ascii=False)
+    rendered = json.dumps(
+        result.model_dump(),
+        indent=2,
+        ensure_ascii=False,
+    )
 
     if args.output:
         output_path = Path(args.output)
         try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(rendered + "\n", encoding="utf-8")
         except OSError as exc:
             console.print(f"[red]Could not write report:[/red] {exc}")
             return 2
+
         console.print(f"[green]Report written to[/green] {output_path}")
     else:
         console.print(rendered)
@@ -42,6 +48,7 @@ def _inspect(args: argparse.Namespace) -> int:
 
 
 def _strings(args: argparse.Namespace) -> int:
+    """Display printable ASCII strings extracted from a file."""
     try:
         result = analyze_file(
             args.path,
@@ -84,7 +91,10 @@ def _summary(args: argparse.Namespace) -> int:
     table.add_row("Extension", result.extension or "(none)")
     table.add_row("SHA-256", result.sha256)
     table.add_row("Signature", result.signature)
-    table.add_row("Entropy (bits/byte)", f"{result.entropy_bits_per_byte:.4f}")
+    table.add_row(
+        "Entropy (bits/byte)",
+        f"{result.entropy_bits_per_byte:.4f}",
+    )
     table.add_row("Printable strings", str(len(result.printable_strings)))
 
     if result.pe_metadata is not None:
@@ -101,11 +111,15 @@ def _summary(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(
         prog="re-intel",
         description="Read-only static file inspection and triage.",
     )
-    commands = parser.add_subparsers(dest="command", required=True)
+    commands = parser.add_subparsers(
+        dest="command",
+        required=True,
+    )
 
     inspect_parser = commands.add_parser(
         "inspect",
@@ -115,9 +129,20 @@ def build_parser() -> argparse.ArgumentParser:
         "path",
         help="Path to a file you are authorized to inspect.",
     )
-    inspect_parser.add_argument("--output", help="Optional path for the JSON report.")
-    inspect_parser.add_argument("--min-string-length", type=int, default=5)
-    inspect_parser.add_argument("--max-strings", type=int, default=500)
+    inspect_parser.add_argument(
+        "--output",
+        help="Optional path for the JSON report.",
+    )
+    inspect_parser.add_argument(
+        "--min-string-length",
+        type=int,
+        default=5,
+    )
+    inspect_parser.add_argument(
+        "--max-strings",
+        type=int,
+        default=500,
+    )
     inspect_parser.set_defaults(handler=_inspect)
 
     strings_parser = commands.add_parser(
@@ -140,14 +165,23 @@ def build_parser() -> argparse.ArgumentParser:
         "path",
         help="Path to a file you are authorized to inspect.",
     )
-    summary_parser.add_argument("--min-string-length", type=int, default=5)
-    summary_parser.add_argument("--max-strings", type=int, default=500)
+    summary_parser.add_argument(
+        "--min-string-length",
+        type=int,
+        default=5,
+    )
+    summary_parser.add_argument(
+        "--max-strings",
+        type=int,
+        default=500,
+    )
     summary_parser.set_defaults(handler=_summary)
 
     return parser
 
 
 def main() -> None:
+    """Validate common arguments and run the selected command."""
     args = build_parser().parse_args()
 
     min_length = getattr(
@@ -155,8 +189,11 @@ def main() -> None:
         "min_string_length",
         getattr(args, "min_length", 1),
     )
+
     if min_length < 1:
-        console.print("[red]Minimum string length must be at least 1.[/red]")
+        console.print(
+            "[red]Minimum string length must be at least 1.[/red]"
+        )
         raise SystemExit(2)
 
     if args.max_strings < 0:

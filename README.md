@@ -56,16 +56,18 @@ flowchart TD
     J --> K["📊 Human-readable summary"]
     J --> L["📄 JSON report"]
     J --> M["🔤 String listing"]
+    J --> O["📁 Batch JSON report"]
     K --> N(["Investigation complete"])
     L --> N
     M --> N
+    O --> N
 
     classDef start fill:#173b33,stroke:#3ca58a,color:#ffffff
     classDef process fill:#172c45,stroke:#4c8eda,color:#ffffff
     classDef output fill:#45341b,stroke:#d6a64d,color:#ffffff
     class A,N start
     class B,C,D,E,F,G,H,I process
-    class J,K,L,M output
+    class J,K,L,M,O output
 ```
 
 ### What happens at each stage?
@@ -250,11 +252,39 @@ re-intel strings sample.txt --max-strings 100
 
 </details>
 
+<details>
+<summary><strong>📁 Mode 4 — Batch file analysis</strong></summary>
+
+Analyze multiple files in a directory and combine the per-file results into one JSON report.
+
+Analyze files directly inside a directory:
+
+```cmd
+re-intel batch examples/fixtures --output examples/reports/batch-report.json
+```
+
+Include files in subdirectories:
+
+```cmd
+re-intel batch examples/fixtures --recursive --output examples/reports/batch-report.json
+```
+
+The report records the generation timestamp, input directory, whether recursive discovery was enabled, the number of files discovered, successful and failed analyses, individual results, and per-file errors.
+
+**Exit codes**
+- `0` — All discovered files were analyzed successfully.
+- `1` — The batch completed, but one or more files could not be analyzed.
+- `2` — The input directory is missing or is not a directory.
+
+The output report is excluded from the input file list when it is inside the directory being analyzed.
+
+</details>
+
 ---
 
 ## 🧪 Quality Assurance
 
-The project includes automated tests for the core analysis workflow.
+The project includes automated tests for file analysis, result models, and CLI behavior—including batch report generation, invalid-directory handling, and per-file errors.
 
 Run the tests:
 
@@ -270,7 +300,7 @@ python -m ruff check src tests
 
 Run both before committing changes. GitHub Actions runs the configured CI workflow on pushes and pull requests.
 
-**Current development milestone:** 20 local tests passed during PE analysis development, and the subsequent CLI update was reported as passing GitHub Actions. Rerun the commands above to verify the current working tree after future changes.
+**Current development milestone:** The latest recorded local run passed 23 tests, and Ruff reported no issues. Rerun the commands above after changes to verify the current working tree.
 
 ---
 
@@ -284,6 +314,11 @@ reverse-engineering-intelligence/
 ├── docs/
 │   └── ARCHITECTURE.md
 ├── examples/
+│   ├── fixtures/
+│   │   └── synthetic_pe.bin
+│   ├── reports/
+│   │   └── batch-report.json
+│   └── create_synthetic_pe.py
 ├── src/
 │   └── re_intel/
 │       ├── analyzers/
@@ -291,6 +326,7 @@ reverse-engineering-intelligence/
 │       ├── cli.py
 │       └── models.py
 ├── tests/
+│   ├── test_cli.py
 │   ├── test_file_analyzer.py
 │   └── test_models.py
 ├── .env.example

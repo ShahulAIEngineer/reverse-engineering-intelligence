@@ -18,6 +18,9 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.5",
 ]
+yara = [
+    "yara-x>=1.22.1,<2",
+]
 
 [project.scripts]
 re-intel = "re_intel.cli:main"

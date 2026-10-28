@@ -18,6 +18,7 @@
 14. Pydantic models validate the structured analysis result.
 15. The CLI presents human-readable summaries, including PE import/export, resource-tree, certificate-table, debug-directory, and overlay metadata, printable strings, or JSON output. Batch mode supports analyzing multiple files and reporting per-file results and errors.
 16. Report comparison validates single-file or batch JSON reports, matches records by normalized path, compares SHA-256 fingerprints, and emits added/removed/modified/unchanged counts plus an optional JSON delta report.
+17. The analyzer emits evidence-backed triage findings using deterministic heuristics. Each finding includes a stable rule ID, severity, explanation, and evidence; heuristic findings prioritize manual review and do not constitute a malware classification.
 
 ## Safety properties
 
@@ -26,7 +27,8 @@
 - The analyzer does not intentionally modify the inspected file.
 - File size is limited by configuration, and file metadata is checked before and after analysis to detect changes during reading.
 - Output files are written only when the user explicitly requests an output path.
-- Extracted strings and file metadata should be treated as untrusted data.
+- Extracted strings, file metadata, triage findings, and resource/CodeView metadata should be treated as untrusted data.
+- Heuristic findings are contextual clues only; absence of findings does not establish that a file is safe, and findings do not establish that a file is malicious.
 
 ## Current scope
 

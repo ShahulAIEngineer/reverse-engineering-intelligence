@@ -1249,3 +1249,78 @@ def test_rejects_pe_resource_leaf_with_unmapped_data_rva(tmp_path):
     assert result.pe_metadata is not None
     assert result.pe_metadata.resource_directory_status == "malformed"
     assert result.pe_metadata.resources == []
+
+
+
+def test_generates_high_entropy_triage_finding(tmp_path):
+    sample = tmp_path / "high_entropy.bin"
+    sample.write_bytes(bytes(range(256)) * 4)
+
+    result = analyze_file(sample)
+
+    findings = {finding.rule_id: finding for finding in result.triage_findings}
+    assert "FILE-HIGH-ENTROPY" in findings
+    assert findings["FILE-HIGH-ENTROPY"].severity == "info"
+    assert "not evidence of malware" in findings["FILE-HIGH-ENTROPY"].description
+
+
+def test_generates_rwx_section_triage_finding(tmp_path):
+    sample = tmp_path / "rwx.exe"
+    create_test_pe(sample, section_count=1)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_size = struct.unpack_from("<H", data, pe_offset + 4 + 16)[0]
+    section_offset = pe_offset + 24 + optional_size
+    data[section_offset : section_offset + 8] = b".packed\x00"
+    struct.pack_into(
+        "<IIII", data, section_offset + 8, 0x100, 0x1000, 0x200, 0x400
+    )
+    struct.pack_into("<I", data, section_offset + 36, 0xE0000020)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    findings = {finding.rule_id: finding for finding in result.triage_findings}
+    assert "PE-SECTION-RWX" in findings
+    assert any(item.startswith("section=.packed") for item in findings["PE-SECTION-RWX"].evidence)
+
+
+def test_generates_dual_use_import_triage_finding(tmp_path):
+    sample = tmp_path / "process_manipulation.exe"
+    create_test_pe_with_imports(
+        sample,
+        symbols=["OpenProcess", "VirtualAllocEx", "WriteProcessMemory"],
+    )
+
+    result = analyze_file(sample)
+
+    findings = {finding.rule_id: finding for finding in result.triage_findings}
+    assert "PE-DUAL-USE-PROCESS-IMPORTS" in findings
+    assert findings["PE-DUAL-USE-PROCESS-IMPORTS"].severity == "medium"
+    assert "import=virtualallocex" in findings["PE-DUAL-USE-PROCESS-IMPORTS"].evidence
+
+
+def test_generates_malformed_directory_triage_finding(tmp_path):
+    sample = tmp_path / "malformed_imports.exe"
+    create_test_pe_with_imports(sample)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_offset = pe_offset + 24
+    struct.pack_into("<I", data, optional_offset + 112 + 8, 0x9000)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    findings = {finding.rule_id: finding for finding in result.triage_findings}
+    assert "PE-MALFORMED-DIRECTORY" in findings
+    assert "import table" in findings["PE-MALFORMED-DIRECTORY"].evidence
+
+
+def test_normal_low_entropy_text_has_no_triage_findings(tmp_path):
+    sample = tmp_path / "normal.txt"
+    sample.write_text("This is a short ordinary text document.", encoding="utf-8")
+
+    result = analyze_file(sample)
+
+    assert result.triage_findings == []

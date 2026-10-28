@@ -135,6 +135,16 @@ class PEMetadata(BaseModel):
     overlay_size: int = Field(default=0, ge=0)
 
 
+class TriageFinding(BaseModel):
+    """A bounded, evidence-backed triage clue rather than a malware verdict."""
+
+    rule_id: str = Field(pattern=r"^[A-Z][A-Z0-9-]{2,64}$")
+    severity: Literal["info", "low", "medium", "high"]
+    title: str = Field(min_length=1, max_length=128)
+    description: str = Field(min_length=1, max_length=1024)
+    evidence: list[str] = Field(default_factory=list, max_length=32)
+
+
 class FileAnalysisResult(BaseModel):
     """Structured, validated metadata about a file."""
 
@@ -147,3 +157,4 @@ class FileAnalysisResult(BaseModel):
     entropy_bits_per_byte: float = Field(ge=0.0, le=8.0)
     printable_strings: list[str] = Field(default_factory=list)
     pe_metadata: PEMetadata | None = None
+    triage_findings: list[TriageFinding] = Field(default_factory=list)

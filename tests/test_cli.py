@@ -558,3 +558,42 @@ def test_compare_does_not_overwrite_an_input_report(tmp_path, monkeypatch, capsy
     assert exc_info.value.code == 2
     assert before_path.read_text(encoding="utf-8") == original
     assert "must not overwrite an input report" in capsys.readouterr().out
+
+
+
+def test_summary_displays_triage_findings(tmp_path, monkeypatch, capsys):
+    """Human-readable summaries should surface the evidence-backed triage clues."""
+    from re_intel.models import TriageFinding
+
+    sample = tmp_path / "sample.bin"
+    sample.write_bytes(b"sample")
+    result = FileAnalysisResult(
+        path=str(sample),
+        name=sample.name,
+        extension=sample.suffix,
+        size_bytes=6,
+        sha256="f" * 64,
+        signature="Unknown",
+        entropy_bits_per_byte=7.5,
+        printable_strings=[],
+        triage_findings=[
+            TriageFinding(
+                rule_id="FILE-HIGH-ENTROPY",
+                severity="info",
+                title="High byte entropy",
+                description="High entropy needs contextual review.",
+                evidence=["shannon_entropy_bits_per_byte=7.500000"],
+            )
+        ],
+    )
+    monkeypatch.setattr("re_intel.cli.analyze_file", lambda *args, **kwargs: result)
+
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(monkeypatch, ["summary", str(sample)])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "Triage findings" in output
+    assert "FILE-HIGH-ENTROPY" in output
+    assert "High byte entropy" in output
+    assert "not a malware verdict" in output

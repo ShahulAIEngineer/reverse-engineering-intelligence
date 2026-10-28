@@ -18,6 +18,7 @@ from re_intel.models import (
     PEMetadata,
     PEOptionalHeader,
     PEResourceEntry,
+    PESection,
 )
 
 
@@ -597,3 +598,49 @@ def test_summary_displays_triage_findings(tmp_path, monkeypatch, capsys):
     assert "FILE-HIGH-ENTROPY" in output
     assert "High byte entropy" in output
     assert "not a malware verdict" in output
+
+
+
+def test_summary_displays_section_entropy(tmp_path, monkeypatch, capsys):
+    """Summary section details should include calculated entropy when available."""
+    sample = tmp_path / "entropy.exe"
+    sample.write_bytes(b"synthetic PE section entropy test")
+    result = FileAnalysisResult(
+        path=str(sample),
+        name=sample.name,
+        extension=sample.suffix,
+        size_bytes=sample.stat().st_size,
+        sha256="1" * 64,
+        signature="Windows PE/DOS executable header (signature hint)",
+        entropy_bits_per_byte=4.0,
+        printable_strings=[],
+        pe_metadata=PEMetadata(
+            machine="x64",
+            section_count=1,
+            is_dll=False,
+            is_executable=True,
+            sections=[
+                PESection(
+                    name=".text",
+                    virtual_size=512,
+                    virtual_address=0x1000,
+                    raw_size=512,
+                    raw_offset=0x400,
+                    entropy_bits_per_byte=7.8125,
+                    readable=True,
+                    writable=False,
+                    executable=True,
+                )
+            ],
+        ),
+    )
+    monkeypatch.setattr("re_intel.cli.analyze_file", lambda *args, **kwargs: result)
+
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(monkeypatch, ["summary", str(sample)])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "PE sections (details)" in output
+    assert "Entropy (bits/byte)" in output
+    assert "7.8125" in output

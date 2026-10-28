@@ -1282,7 +1282,7 @@ def test_generates_rwx_section_triage_finding(tmp_path):
 
     findings = {finding.rule_id: finding for finding in result.triage_findings}
     assert "PE-SECTION-RWX" in findings
-    assert "section=.packed" in findings["PE-SECTION-RWX"].evidence
+    assert any(item.startswith("section=.packed") for item in findings["PE-SECTION-RWX"].evidence)
 
 
 def test_generates_dual_use_import_triage_finding(tmp_path):

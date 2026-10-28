@@ -12,6 +12,7 @@ class PESection(BaseModel):
     virtual_address: int = Field(ge=0)
     raw_size: int = Field(ge=0)
     raw_offset: int = Field(ge=0)
+    entropy_bits_per_byte: float | None = Field(default=None, ge=0.0, le=8.0)
     readable: bool
     writable: bool
     executable: bool

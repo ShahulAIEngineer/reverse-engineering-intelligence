@@ -36,6 +36,7 @@ MAX_PE_DEBUG_ENTRIES = 128
 MAX_PE_RESOURCE_ENTRIES = 4096
 MAX_PE_RESOURCE_DEPTH = 8
 MAX_PE_RESOURCE_NAME_CHARS = 256
+MAX_TOTAL_SECTION_ENTROPY_BYTES = 100 * BYTES_PER_MIB
 
 PE_RESOURCE_TYPES = {
     1: "RT_CURSOR",
@@ -1025,6 +1026,30 @@ def _extract_pe_overlay(
     return "present", overlay_start, overlay_size
 
 
+def _extract_section_entropy(
+    file_handle,
+    *,
+    raw_offset: int,
+    raw_size: int,
+    file_size: int,
+) -> float | None:
+    """Calculate entropy for a fully mapped section raw-data range."""
+    if raw_size <= 0 or raw_offset > file_size or raw_size > file_size - raw_offset:
+        return None
+
+    file_handle.seek(raw_offset)
+    counts: Counter[int] = Counter()
+    remaining = raw_size
+    while remaining:
+        chunk = file_handle.read(min(CHUNK_SIZE, remaining))
+        if not chunk:
+            return None
+        counts.update(chunk)
+        remaining -= len(chunk)
+
+    return round(_entropy(counts, raw_size), 6)
+
+
 def _extract_pe_metadata(path: Path) -> PEMetadata | None:
     """Extract basic PE metadata, returning None for malformed/non-PE files."""
     try:
@@ -1109,6 +1134,9 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                 return None
 
             sections: list[PESection] = []
+            section_entropy_budget = min(
+                file_size, MAX_TOTAL_SECTION_ENTROPY_BYTES
+            )
             for section_index in range(section_count):
                 entry_offset = section_table_offset + section_index * 40
                 file_handle.seek(entry_offset)
@@ -1122,6 +1150,17 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                     "<IIII", section_entry, 8
                 )
                 section_characteristics = struct.unpack_from("<I", section_entry, 36)[0]
+                section_entropy = None
+                if raw_size > 0 and raw_size <= section_entropy_budget:
+                    section_entropy = _extract_section_entropy(
+                        file_handle,
+                        raw_offset=raw_offset,
+                        raw_size=raw_size,
+                        file_size=file_size,
+                    )
+                    if section_entropy is not None:
+                        section_entropy_budget -= raw_size
+
                 sections.append(
                     PESection(
                         name=section_name,
@@ -1129,6 +1168,7 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                         virtual_address=virtual_address,
                         raw_size=raw_size,
                         raw_offset=raw_offset,
+                        entropy_bits_per_byte=section_entropy,
                         readable=bool(section_characteristics & 0x40000000),
                         writable=bool(section_characteristics & 0x80000000),
                         executable=bool(section_characteristics & 0x20000000),
@@ -1271,6 +1311,31 @@ def _generate_triage_findings(
                 evidence=[
                     f"section={section.name}, writable=true, executable=true"
                     for section in rwx_sections[:16]
+                ],
+            )
+        )
+
+    high_entropy_sections = [
+        section
+        for section in pe_metadata.sections
+        if section.entropy_bits_per_byte is not None
+        and section.entropy_bits_per_byte >= 7.2
+    ]
+    if high_entropy_sections:
+        findings.append(
+            TriageFinding(
+                rule_id="PE-SECTION-HIGH-ENTROPY",
+                severity="info",
+                title="High-entropy PE section",
+                description=(
+                    "One or more section raw-data ranges have high byte entropy. "
+                    "Compression, encryption, packed content, and ordinary binary data "
+                    "can all produce this pattern; inspect the section in context."
+                ),
+                evidence=[
+                    f"section={section.name}, entropy_bits_per_byte="
+                    f"{section.entropy_bits_per_byte:.6f}"
+                    for section in high_entropy_sections[:16]
                 ],
             )
         )

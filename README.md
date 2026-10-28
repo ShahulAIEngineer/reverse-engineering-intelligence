@@ -109,12 +109,15 @@ Available per-section metadata includes:
 - Virtual address and virtual size
 - Raw file offset and raw size
 - Readable, writable, and executable characteristics
+- Entropy of a valid section's raw-data bytes, subject to an aggregate read budget
+
+High-entropy sections are reported as informational triage clues. Compression, encryption, packing, and ordinary binary content can all cause high entropy. Invalid or out-of-range raw-data regions are shown with unavailable entropy rather than being read blindly.
 
 PE inspection covers selected structures; it is not a complete PE parser.
 
 ### 🧭 Evidence-based triage findings
 
-Generates explainable investigation clues for high entropy, writable/executable PE sections, entry points outside executable sections, combinations of dual-use process-manipulation imports, malformed PE directories, and trailing overlay data. Each finding includes a stable rule ID, severity, description, and evidence. These heuristics prioritize analyst review; they do **not** determine whether a file is malicious.
+Generates explainable investigation clues for high file or section entropy, writable/executable PE sections, entry points outside executable sections, combinations of dual-use process-manipulation imports, malformed PE directories, and trailing overlay data. Each finding includes a stable rule ID, severity, description, and evidence. These heuristics prioritize analyst review; they do **not** determine whether a file is malicious.
 
 ### 📄 Structured reporting
 

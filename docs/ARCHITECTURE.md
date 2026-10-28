@@ -8,7 +8,7 @@
 4. It examines leading bytes for a heuristic signature hint and extracts printable ASCII strings.
 5. For recognized Windows PE candidates, the analyzer validates selected header boundaries and extracts basic PE metadata.
 6. PE metadata includes the machine architecture, selected optional-header fields, section count, executable and DLL flags, section details, import/export tables, the resource tree, debug entries, certificate records, and overlay estimates.
-7. Selected optional-header fields include PE32/PE32+ format, entry-point RVA, image base, section and file alignment, image/header sizes, subsystem, and DLL characteristics. Section metadata includes section names, virtual addresses and sizes, raw file offsets and sizes, and read/write/execute characteristics.
+7. Selected optional-header fields include PE32/PE32+ format, entry-point RVA, image base, section and file alignment, image/header sizes, subsystem, and DLL characteristics. Section metadata includes section names, virtual addresses and sizes, raw file offsets and sizes, read/write/execute characteristics, and bounded entropy measurements for valid raw-data ranges. An aggregate read budget bounds section-entropy work across overlapping or adversarial section declarations.
 8. Import-table parsing maps RVAs through headers or section raw data and extracts imported DLL names plus imports by name or ordinal. Export-table parsing extracts named and ordinal-only exports and forwarded exports.
 9. The security directory is handled as a file-offset range, not an RVA. The analyzer reads bounded WIN_CERTIFICATE record headers and reports absent, parsed, or malformed certificate-table metadata without verifying signatures.
 10. The debug directory is mapped through the bounded section/header RVA mapper. IMAGE_DEBUG_DIRECTORY entries are parsed within fixed record-count limits; RSDS CodeView records optionally provide a GUID, age, and bounded PDB path.
@@ -18,7 +18,7 @@
 14. Pydantic models validate the structured analysis result.
 15. The CLI presents human-readable summaries, including PE import/export, resource-tree, certificate-table, debug-directory, and overlay metadata, printable strings, or JSON output. Batch mode supports analyzing multiple files and reporting per-file results and errors.
 16. Report comparison validates single-file or batch JSON reports, matches records by normalized path, compares SHA-256 fingerprints, and emits added/removed/modified/unchanged counts plus an optional JSON delta report.
-17. The analyzer emits evidence-backed triage findings using deterministic heuristics. Each finding includes a stable rule ID, severity, explanation, and evidence; heuristic findings prioritize manual review and do not constitute a malware classification.
+17. The analyzer emits evidence-backed triage findings using deterministic heuristics. Each finding includes a stable rule ID, severity, explanation, and evidence; high file or section entropy is informational only, and heuristic findings prioritize manual review rather than malware classification.
 
 ## Safety properties
 

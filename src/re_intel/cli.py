@@ -165,6 +165,7 @@ def _summary(args: argparse.Namespace) -> int:
             section_table.add_column("Virtual size", justify="right")
             section_table.add_column("Raw offset")
             section_table.add_column("Raw size", justify="right")
+            section_table.add_column("Entropy (bits/byte)", justify="right")
             section_table.add_column("R/W/X")
             for section in pe.sections:
                 permissions = (
@@ -178,6 +179,11 @@ def _summary(args: argparse.Namespace) -> int:
                     str(section.virtual_size),
                     f"0x{section.raw_offset:08X}",
                     str(section.raw_size),
+                    (
+                        f"{section.entropy_bits_per_byte:.4f}"
+                        if section.entropy_bits_per_byte is not None
+                        else "n/a"
+                    ),
                     permissions,
                 )
             console.print(section_table)

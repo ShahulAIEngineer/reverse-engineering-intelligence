@@ -1324,3 +1324,56 @@ def test_normal_low_entropy_text_has_no_triage_findings(tmp_path):
     result = analyze_file(sample)
 
     assert result.triage_findings == []
+
+
+
+def test_calculates_entropy_for_pe_section_raw_data(tmp_path):
+    sample = tmp_path / "section_entropy.exe"
+    create_test_pe(sample, section_count=1)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_offset = pe_offset + 24
+    optional_size = struct.unpack_from("<H", data, pe_offset + 4 + 16)[0]
+    section_offset = optional_offset + optional_size
+    raw_offset = 0x400
+    raw_size = 0x200
+
+    if len(data) < raw_offset + raw_size:
+        data.extend(b"\x00" * (raw_offset + raw_size - len(data)))
+    struct.pack_into("<I", data, optional_offset + 16, 0x1000)
+    data[section_offset : section_offset + 8] = b".text\x00\x00\x00"
+    struct.pack_into(
+        "<IIII", data, section_offset + 8, raw_size, 0x1000, raw_size, raw_offset
+    )
+    struct.pack_into("<I", data, section_offset + 36, 0x60000020)
+    data[raw_offset : raw_offset + raw_size] = bytes(range(256)) * 2
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    section = result.pe_metadata.sections[0]
+    assert section.name == ".text"
+    assert section.entropy_bits_per_byte == 8.0
+    findings = {finding.rule_id: finding for finding in result.triage_findings}
+    assert "PE-SECTION-HIGH-ENTROPY" in findings
+    assert "section=.text" in findings["PE-SECTION-HIGH-ENTROPY"].evidence[0]
+
+
+def test_unmapped_pe_section_has_no_entropy_value(tmp_path):
+    sample = tmp_path / "unmapped_section.exe"
+    create_test_pe(sample, section_count=1)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_size = struct.unpack_from("<H", data, pe_offset + 4 + 16)[0]
+    section_offset = pe_offset + 24 + optional_size
+    struct.pack_into(
+        "<IIII", data, section_offset + 8, 0x200, 0x1000, 0x200, 0x7FFFFFF0
+    )
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.sections[0].entropy_bits_per_byte is None
+    assert result.pe_metadata.overlay_status == "uncertain"

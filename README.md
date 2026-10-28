@@ -4,7 +4,7 @@
 
 **Inspect. Fingerprint. Investigate. Understand.**
 
-A Python-powered, read-only static file analysis toolkit built to help security learners and developers inspect files, identify basic file signatures, extract printable strings, estimate entropy, and examine Windows PE headers, sections, import/export tables, CodeView debug metadata, certificate-table records, and trailing overlay data — without intentionally executing or modifying the files being inspected.
+A Python-powered, read-only static file analysis toolkit built to help security learners and developers inspect files, identify basic file signatures, extract printable strings, estimate entropy, and examine Windows PE headers, sections, import/export tables, resource trees, CodeView debug metadata, certificate-table records, and trailing overlay data — without intentionally executing or modifying the files being inspected.
 
 [![Python CI](https://github.com/ShahulAIEngineer/reverse-engineering-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/ShahulAIEngineer/reverse-engineering-intelligence/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
@@ -101,7 +101,7 @@ Calculates Shannon entropy in bits per byte, from 0 to 8, as one signal for furt
 
 ### 🪟 Windows PE inspection
 
-Reads selected PE/COFF header fields, entry point, image base, alignments, image/header sizes, subsystem, DLL characteristics, section permissions, import/export tables, CodeView RSDS identifiers and PDB paths, certificate-table record headers, and estimated trailing overlay data. Certificate records are parsed with bounds checks; the tool does not cryptographically verify Authenticode signatures. PDB paths and identifiers are evidence, not proof of a matching build or a safe file. Malformed directories are reported explicitly.
+Reads selected PE/COFF header fields, entry point, image base, alignments, image/header sizes, subsystem, DLL characteristics, section permissions, import/export tables, bounded resource trees, CodeView RSDS identifiers and PDB paths, certificate-table record headers, and estimated trailing overlay data. Certificate records are parsed with bounds checks; the tool does not cryptographically verify Authenticode signatures. PDB paths and identifiers are evidence, not proof of a matching build or a safe file. Malformed directories are reported explicitly.
 
 Available per-section metadata includes:
 
@@ -415,7 +415,7 @@ Only inspect files you own or have permission to analyze. Treat file contents an
 Potential future milestones:
 
 - [ ] Expand PE validation and optional-header analysis.
-- [ ] Add PE resource-directory metadata.
+- [ ] Add report comparison and investigation-diff commands.
 - [ ] Add configurable report schemas and machine-readable analysis summaries.
 - [ ] Add more file-format fixtures and malformed-input tests.
 - [ ] Expand resource-use controls and test additional large-file edge cases.

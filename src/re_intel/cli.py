@@ -137,6 +137,11 @@ def _summary(args: argparse.Namespace) -> int:
             pe.debug_directory_status.replace("_", " "),
         )
         table.add_row("PE debug entries", str(len(pe.debug_entries)))
+        table.add_row(
+            "PE resource directory",
+            pe.resource_directory_status.replace("_", " "),
+        )
+        table.add_row("PE resource entries", str(len(pe.resources)))
         if pe.certificate_table.file_offset is not None:
             table.add_row(
                 "PE certificate table offset",
@@ -188,6 +193,25 @@ def _summary(args: argparse.Namespace) -> int:
                     displayed_symbols.append(f"... +{len(module.symbols) - 10} more")
                 import_table.add_row(module.name, ", ".join(displayed_symbols) or "(none)")
             console.print(import_table)
+
+        if pe.resources:
+            resource_table = Table(title="PE resources")
+            resource_table.add_column("Path")
+            resource_table.add_column("Size", justify="right")
+            resource_table.add_column("Data RVA")
+            resource_table.add_column("Code page", justify="right")
+            for resource in pe.resources[:20]:
+                resource_table.add_row(
+                    " / ".join(resource.path),
+                    str(resource.size),
+                    f"0x{resource.data_rva:08X}",
+                    str(resource.code_page),
+                )
+            if len(pe.resources) > 20:
+                resource_table.add_row(
+                    f"... +{len(pe.resources) - 20} more", "", "", ""
+                )
+            console.print(resource_table)
 
         codeview_entries = [
             entry for entry in pe.debug_entries if entry.codeview_format == "RSDS"

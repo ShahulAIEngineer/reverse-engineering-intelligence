@@ -46,6 +46,16 @@ class PEExportSymbol(BaseModel):
     forwarder: str | None = Field(default=None, min_length=1, max_length=4096)
 
 
+class PEResourceEntry(BaseModel):
+    """Metadata for one leaf entry in a PE resource directory."""
+
+    path: list[str] = Field(min_length=1, max_length=8)
+    data_rva: int = Field(ge=0, le=0xFFFFFFFF)
+    size: int = Field(ge=0, le=0xFFFFFFFF)
+    code_page: int = Field(ge=0, le=0xFFFFFFFF)
+    file_offset: int | None = Field(default=None, ge=0)
+
+
 class PEDebugEntry(BaseModel):
     """Selected IMAGE_DEBUG_DIRECTORY fields and optional RSDS CodeView details."""
 
@@ -118,6 +128,8 @@ class PEMetadata(BaseModel):
     certificate_table: PECertificateTable = Field(default_factory=PECertificateTable)
     debug_directory_status: Literal["not_present", "parsed", "malformed"] = "not_present"
     debug_entries: list[PEDebugEntry] = Field(default_factory=list)
+    resource_directory_status: Literal["not_present", "parsed", "malformed"] = "not_present"
+    resources: list[PEResourceEntry] = Field(default_factory=list)
     overlay_status: Literal["not_present", "present", "uncertain"] = "not_present"
     overlay_offset: int | None = Field(default=None, ge=0)
     overlay_size: int = Field(default=0, ge=0)

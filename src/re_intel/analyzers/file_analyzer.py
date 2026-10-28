@@ -14,6 +14,7 @@ from re_intel.models import (
     PECertificateTable,
     PEDebugEntry,
     PEExportSymbol,
+    PEResourceEntry,
     PEImportModule,
     PEImportSymbol,
     PEMetadata,
@@ -31,6 +32,33 @@ MAX_PE_EXPORTS = 20_000
 MAX_PE_STRING_LENGTH = 4096
 MAX_PE_CERTIFICATE_ENTRIES = 64
 MAX_PE_DEBUG_ENTRIES = 128
+MAX_PE_RESOURCE_ENTRIES = 4096
+MAX_PE_RESOURCE_DEPTH = 8
+MAX_PE_RESOURCE_NAME_CHARS = 256
+
+PE_RESOURCE_TYPES = {
+    1: "RT_CURSOR",
+    2: "RT_BITMAP",
+    3: "RT_ICON",
+    4: "RT_MENU",
+    5: "RT_DIALOG",
+    6: "RT_STRING",
+    7: "RT_FONTDIR",
+    8: "RT_FONT",
+    9: "RT_ACCELERATOR",
+    10: "RT_RCDATA",
+    11: "RT_MESSAGETABLE",
+    12: "RT_GROUP_CURSOR",
+    14: "RT_GROUP_ICON",
+    16: "RT_VERSION",
+    17: "RT_DLGINCLUDE",
+    19: "RT_PLUGPLAY",
+    20: "RT_VXD",
+    21: "RT_ANICURSOR",
+    22: "RT_ANIICON",
+    23: "RT_HTML",
+    24: "RT_MANIFEST",
+}
 
 PE_DEBUG_TYPES = {
     0: "Unknown",
@@ -683,6 +711,155 @@ def _extract_pe_certificate_table(
     )
 
 
+def _extract_pe_resources(
+    file_handle,
+    *,
+    optional_header: bytes,
+    optional_magic: int,
+    sections: list[PESection],
+    file_size: int,
+    size_of_headers: int,
+) -> tuple[list[PEResourceEntry], Literal["not_present", "parsed", "malformed"]]:
+    """Parse a bounded PE resource tree without loading resource payloads."""
+    count_offset = 92 if optional_magic == 0x010B else 108
+    directories_offset = 96 if optional_magic == 0x010B else 112
+
+    if len(optional_header) < count_offset + 4:
+        return [], "malformed"
+    directory_count = struct.unpack_from("<I", optional_header, count_offset)[0]
+    if directory_count <= 2:
+        return [], "not_present"
+    if len(optional_header) < directories_offset + 3 * 8:
+        return [], "malformed"
+
+    resource_rva, resource_size = struct.unpack_from(
+        "<II", optional_header, directories_offset + 2 * 8
+    )
+    if resource_rva == 0 and resource_size == 0:
+        return [], "not_present"
+    if resource_rva == 0 or resource_size < 16:
+        return [], "malformed"
+
+    def read_relative(relative_offset: int, size: int) -> bytes | None:
+        """Read only bytes fully within the declared resource directory range."""
+        if (
+            relative_offset < 0
+            or size < 0
+            or relative_offset > resource_size
+            or size > resource_size - relative_offset
+        ):
+            return None
+        return _read_rva_bytes_at_rva(
+            file_handle,
+            resource_rva + relative_offset,
+            size,
+            sections=sections,
+            file_size=file_size,
+            size_of_headers=size_of_headers,
+        )
+
+    def read_name(name_field: int) -> str | None:
+        """Read a length-prefixed UTF-16 resource name."""
+        name_offset = name_field & 0x7FFFFFFF
+        length_data = read_relative(name_offset, 2)
+        if length_data is None:
+            return None
+        char_count = struct.unpack("<H", length_data)[0]
+        if char_count > MAX_PE_RESOURCE_NAME_CHARS:
+            return None
+        encoded = read_relative(name_offset + 2, char_count * 2)
+        if encoded is None:
+            return None
+        return encoded.decode("utf-16le", errors="replace")
+
+    def label_for(name_field: int, depth: int) -> str | None:
+        if name_field & 0x80000000:
+            return read_name(name_field)
+        identifier = name_field & 0x7FFFFFFF
+        if depth == 0:
+            return PE_RESOURCE_TYPES.get(identifier, f"TYPE:{identifier}")
+        if depth == 2:
+            return f"LANG:{identifier}"
+        return f"ID:{identifier}"
+
+    resource_items: list[PEResourceEntry] = []
+    active_directories: set[int] = set()
+    total_entries = 0
+
+    def walk_directory(relative_offset: int, path: list[str], depth: int) -> bool:
+        nonlocal total_entries
+        if depth >= MAX_PE_RESOURCE_DEPTH or relative_offset in active_directories:
+            return False
+
+        header = read_relative(relative_offset, 16)
+        if header is None:
+            return False
+        named_count, id_count = struct.unpack_from("<HH", header, 12)
+        count = named_count + id_count
+        total_entries += count
+        if total_entries > MAX_PE_RESOURCE_ENTRIES:
+            return False
+
+        entry_bytes = read_relative(relative_offset + 16, count * 8)
+        if entry_bytes is None:
+            return False
+
+        active_directories.add(relative_offset)
+        try:
+            for index in range(count):
+                name_field, target_field = struct.unpack_from(
+                    "<II", entry_bytes, index * 8
+                )
+                label = label_for(name_field, depth)
+                if label is None:
+                    return False
+                next_path = [*path, label]
+                target_offset = target_field & 0x7FFFFFFF
+
+                if target_field & 0x80000000:
+                    if not walk_directory(target_offset, next_path, depth + 1):
+                        return False
+                    continue
+
+                data_entry = read_relative(target_offset, 16)
+                if data_entry is None:
+                    return False
+                data_rva, data_size, code_page, _ = struct.unpack("<IIII", data_entry)
+                data_file_offset = None
+                if data_size:
+                    if data_rva == 0:
+                        return False
+                    data_span = _rva_to_file_span(
+                        data_rva,
+                        sections=sections,
+                        file_size=file_size,
+                        size_of_headers=size_of_headers,
+                    )
+                    if data_span is None or data_span[1] < data_size:
+                        return False
+                    data_file_offset = data_span[0]
+
+                resource_items.append(
+                    PEResourceEntry(
+                        path=next_path,
+                        data_rva=data_rva,
+                        size=data_size,
+                        code_page=code_page,
+                        file_offset=data_file_offset,
+                    )
+                )
+                if len(resource_items) > MAX_PE_RESOURCE_ENTRIES:
+                    return False
+        finally:
+            active_directories.remove(relative_offset)
+
+        return True
+
+    if not walk_directory(0, [], 0):
+        return [], "malformed"
+    return resource_items, "parsed"
+
+
 def _extract_pe_debug_directory(
     file_handle,
     *,
@@ -993,6 +1170,14 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                 file_size=file_size,
                 size_of_headers=size_of_headers,
             )
+            resources, resource_directory_status = _extract_pe_resources(
+                file_handle,
+                optional_header=optional_header,
+                optional_magic=optional_magic,
+                sections=sections,
+                file_size=file_size,
+                size_of_headers=size_of_headers,
+            )
             overlay_status, overlay_offset, overlay_size = _extract_pe_overlay(
                 file_size=file_size,
                 sections=sections,
@@ -1014,6 +1199,8 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                 certificate_table=certificate_table,
                 debug_directory_status=debug_directory_status,
                 debug_entries=debug_entries,
+                resource_directory_status=resource_directory_status,
+                resources=resources,
                 overlay_status=overlay_status,
                 overlay_offset=overlay_offset,
                 overlay_size=overlay_size,

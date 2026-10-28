@@ -309,11 +309,30 @@ The output report is excluded from the input file list when it is inside the dir
 
 </details>
 
+<details>
+<summary><strong>🔎 Mode 5 — Compare investigation reports</strong></summary>
+
+Compare a saved single-file JSON report or batch report against a later report. Files are matched by normalized path and classified by SHA-256 as added, removed, modified, or unchanged.
+
+```powershell
+re-intel compare reports-before.json reports-after.json
+```
+
+Save a machine-readable comparison:
+
+```powershell
+re-intel compare reports-before.json reports-after.json --output comparison.json
+```
+
+The comparison does not execute files or infer that a file is malicious. It compares path presence and cryptographic fingerprints. When batch reports contain per-file errors, the command warns that only successfully analyzed files are included.
+
+</details>
+
 ---
 
 ## 🧪 Quality Assurance
 
-The project includes automated tests for file analysis, result models, and CLI behavior, including batch report generation, invalid-directory handling, and per-file errors.
+The project includes automated tests for file analysis, result models, and CLI behavior, including batch report generation, invalid-directory handling, per-file errors, and single-file or batch-report comparisons.
 
 Run the tests:
 
@@ -415,7 +434,7 @@ Only inspect files you own or have permission to analyze. Treat file contents an
 Potential future milestones:
 
 - [ ] Expand PE validation and optional-header analysis.
-- [ ] Add report comparison and investigation-diff commands.
+- [ ] Add optional YARA rule integration and rule-result reporting.
 - [ ] Add configurable report schemas and machine-readable analysis summaries.
 - [ ] Add more file-format fixtures and malformed-input tests.
 - [ ] Expand resource-use controls and test additional large-file edge cases.

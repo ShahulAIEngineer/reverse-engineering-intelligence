@@ -37,6 +37,15 @@ class PEImportModule(BaseModel):
     symbols: list[PEImportSymbol] = Field(default_factory=list)
 
 
+class PEExportSymbol(BaseModel):
+    """An exported PE symbol, including forwarded exports when present."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=4096)
+    ordinal: int = Field(ge=0, le=0xFFFFFFFF)
+    address_rva: int = Field(ge=0, le=0xFFFFFFFF)
+    forwarder: str | None = Field(default=None, min_length=1, max_length=4096)
+
+
 class PEMetadata(BaseModel):
     """Basic metadata parsed from a Windows PE header."""
 
@@ -47,6 +56,8 @@ class PEMetadata(BaseModel):
     sections: list[PESection] = Field(default_factory=list)
     import_table_status: Literal["not_present", "parsed", "malformed"] = "not_present"
     imports: list[PEImportModule] = Field(default_factory=list)
+    export_table_status: Literal["not_present", "parsed", "malformed"] = "not_present"
+    exports: list[PEExportSymbol] = Field(default_factory=list)
 
 
 class FileAnalysisResult(BaseModel):

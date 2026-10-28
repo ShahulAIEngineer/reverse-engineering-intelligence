@@ -7,11 +7,12 @@
 3. The analyzer reads file content in bounded chunks to calculate SHA-256 and Shannon entropy.
 4. It examines leading bytes for a heuristic signature hint and extracts printable ASCII strings.
 5. For recognized Windows PE candidates, the analyzer validates selected header boundaries and extracts basic PE metadata.
-6. PE metadata includes the machine architecture, section count, executable and DLL flags, section details, and import-table analysis.
+6. PE metadata includes the machine architecture, section count, executable and DLL flags, section details, and import/export table analysis.
 7. Section metadata includes section names, virtual addresses and sizes, raw file offsets and sizes, and read/write/execute characteristics.
-8. Import-table parsing maps RVAs through headers or section raw data and extracts imported DLL names plus imports by name or ordinal. Parsing is bounded by module, symbol, and string limits; malformed tables receive an explicit status.
-9. Pydantic models validate the structured analysis result.
-10. The CLI presents human-readable summaries, including PE import counts and details, printable strings, or JSON output. Batch mode supports analyzing multiple files and reporting per-file results and errors.
+8. Import-table parsing maps RVAs through headers or section raw data and extracts imported DLL names plus imports by name or ordinal. Export-table parsing extracts named and ordinal-only exports and forwarded exports.
+9. Both table parsers use bounded counts and strings and report absent or malformed tables explicitly.
+10. Pydantic models validate the structured analysis result.
+11. The CLI presents human-readable summaries, including PE import/export counts and details, printable strings, or JSON output. Batch mode supports analyzing multiple files and reporting per-file results and errors.
 
 ## Safety properties
 
@@ -30,4 +31,4 @@ PE parsing validates selected structures and extracts useful metadata; it does n
 
 ## Future extensions
 
-Potential follow-on modules include PE export-table inspection, additional file-format support, optional YARA integration, report comparisons, and a richer evidence trail. Each extension should preserve read-only handling and include appropriate automated tests.
+Potential follow-on modules include PE debug-directory and certificate metadata, additional file-format support, optional YARA integration, report comparisons, and a richer evidence trail. Each extension should preserve read-only handling and include appropriate automated tests.

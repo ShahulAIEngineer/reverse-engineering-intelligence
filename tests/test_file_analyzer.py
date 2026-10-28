@@ -257,6 +257,72 @@ def create_test_pe_with_imports(path, *, machine=0x8664, symbols=None):
     path.write_bytes(data)
 
 
+def create_test_pe_with_exports(path, *, machine=0x8664):
+    """Create a small synthetic PE with named, forwarded, and ordinal-only exports."""
+    create_test_pe(path, machine=machine, section_count=1)
+    data = bytearray(path.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_header_size = struct.unpack_from("<H", data, pe_offset + 4 + 16)[0]
+    optional_offset = pe_offset + 24
+    section_offset = optional_offset + optional_header_size
+    raw_offset = 0x400
+    raw_size = 0x400
+    if len(data) < raw_offset + raw_size:
+        data.extend(b"\x00" * (raw_offset + raw_size - len(data)))
+
+    data[section_offset : section_offset + 8] = b".edata\x00\x00"
+    struct.pack_into(
+        "<IIII",
+        data,
+        section_offset + 8,
+        raw_size,
+        0x1000,
+        raw_size,
+        raw_offset,
+    )
+    struct.pack_into("<I", data, section_offset + 36, 0x40000040)
+
+    is_64bit = machine in (0x8664, 0xAA64)
+    directory_count_offset = 108 if is_64bit else 92
+    directory_table_offset = 112 if is_64bit else 96
+    struct.pack_into("<I", data, optional_offset + 60, raw_offset)
+    struct.pack_into("<I", data, optional_offset + directory_count_offset, 16)
+    struct.pack_into(
+        "<II",
+        data,
+        optional_offset + directory_table_offset,
+        0x1000,
+        0x100,
+    )
+
+    # Export directory: three function slots, one public name, and a forwarded entry.
+    struct.pack_into(
+        "<IIHHIIIIIII",
+        data,
+        raw_offset,
+        0,
+        0,
+        0,
+        0,
+        0x1028,
+        1,
+        3,
+        1,
+        0x1040,
+        0x104C,
+        0x1050,
+    )
+    data[raw_offset + 0x28 : raw_offset + 0x28 + 11] = b"sample.dll\x00"
+    struct.pack_into("<III", data, raw_offset + 0x40, 0x1100, 0x1058, 0x1120)
+    struct.pack_into("<I", data, raw_offset + 0x4C, 0x1080)
+    struct.pack_into("<H", data, raw_offset + 0x50, 0)
+    data[raw_offset + 0x58 : raw_offset + 0x58 + 15] = b"KERNEL32.Sleep\x00"
+    data[raw_offset + 0x80 : raw_offset + 0x80 + 11] = b"DemoExport\x00"
+    path.write_bytes(data)
+
+
+
+
 def test_extracts_pe_section_metadata(tmp_path):
     sample = tmp_path / "sections.exe"
     create_test_pe(sample, machine=0x8664, section_count=1)
@@ -352,6 +418,60 @@ def test_reports_absent_pe_import_directory(tmp_path):
     assert result.pe_metadata is not None
     assert result.pe_metadata.import_table_status == "not_present"
     assert result.pe_metadata.imports == []
+
+
+
+
+@pytest.mark.parametrize("machine", [0x014C, 0x8664])
+def test_extracts_pe_export_table_and_forwarders(tmp_path, machine):
+    sample = tmp_path / "exports.dll"
+    create_test_pe_with_exports(sample, machine=machine)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.export_table_status == "parsed"
+    exports = result.pe_metadata.exports
+    assert len(exports) == 3
+    assert exports[0].name == "DemoExport"
+    assert exports[0].ordinal == 1
+    assert exports[0].address_rva == 0x1100
+    assert exports[0].forwarder is None
+    assert exports[1].name is None
+    assert exports[1].ordinal == 2
+    assert exports[1].forwarder == "KERNEL32.Sleep"
+    assert exports[2].name is None
+    assert exports[2].ordinal == 3
+    assert exports[2].address_rva == 0x1120
+
+
+def test_reports_malformed_pe_export_directory(tmp_path):
+    sample = tmp_path / "malformed_exports.dll"
+    create_test_pe_with_exports(sample)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_offset = pe_offset + 24
+    optional_magic = struct.unpack_from("<H", data, optional_offset)[0]
+    directory_offset = 112 if optional_magic == 0x020B else 96
+    struct.pack_into("<I", data, optional_offset + directory_offset, 0x9000)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.export_table_status == "malformed"
+    assert result.pe_metadata.exports == []
+
+
+def test_reports_absent_pe_export_directory(tmp_path):
+    sample = tmp_path / "no_exports.dll"
+    create_test_pe(sample)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.export_table_status == "not_present"
+    assert result.pe_metadata.exports == []
 
 
 def test_extracts_x64_pe_metadata(tmp_path):

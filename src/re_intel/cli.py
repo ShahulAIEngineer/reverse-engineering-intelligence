@@ -13,6 +13,7 @@ from re_intel.analyzers.file_analyzer import (
     DEFAULT_MAX_FILE_SIZE_MB,
     analyze_file,
 )
+from re_intel.models import FileAnalysisResult
 
 console = Console()
 
@@ -360,6 +361,165 @@ def _batch(args: argparse.Namespace) -> int:
     return 1 if report["files_failed"] else 0
 
 
+def _comparison_key(path: str) -> str:
+    """Normalize report paths consistently across Windows and POSIX separators."""
+    return path.replace("\\", "/").casefold().rstrip("/")
+
+
+def _load_comparison_report(
+    report_path: Path,
+) -> tuple[dict[str, FileAnalysisResult], dict]:
+    """Load and validate either a single-file or batch JSON analysis report."""
+    try:
+        document = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Could not load JSON report '{report_path}': {exc}") from exc
+
+    if not isinstance(document, dict):
+        raise ValueError(f"Report must contain a JSON object: {report_path}")
+
+    if "results" in document:
+        raw_results = document["results"]
+        if not isinstance(raw_results, list):
+            raise ValueError(f"Batch report 'results' must be a list: {report_path}")
+    elif "sha256" in document:
+        raw_results = [document]
+    else:
+        raise ValueError(
+            f"Unsupported report format in '{report_path}': "
+            "expected a single-file analysis or batch report"
+        )
+
+    results: dict[str, FileAnalysisResult] = {}
+    for index, raw_result in enumerate(raw_results):
+        if not isinstance(raw_result, dict):
+            raise ValueError(
+                f"Report '{report_path}' result {index} is not a JSON object"
+            )
+        try:
+            result = FileAnalysisResult.model_validate(raw_result)
+        except ValueError as exc:
+            raise ValueError(
+                f"Report '{report_path}' result {index} is invalid: {exc}"
+            ) from exc
+
+        key = _comparison_key(result.path)
+        if key in results:
+            raise ValueError(
+                f"Report '{report_path}' contains duplicate file paths: {result.path}"
+            )
+        results[key] = result
+
+    return results, document
+
+
+def _compare_reports(args: argparse.Namespace) -> int:
+    """Compare two JSON reports and identify added, removed, or modified files."""
+    before_path = Path(args.before)
+    after_path = Path(args.after)
+    output_path = Path(args.output) if args.output else None
+
+    resolved_inputs = {before_path.resolve(), after_path.resolve()}
+    if output_path is not None and output_path.resolve() in resolved_inputs:
+        console.print("[red]Comparison output must not overwrite an input report.[/red]")
+        return 2
+
+    try:
+        before, before_document = _load_comparison_report(before_path)
+        after, after_document = _load_comparison_report(after_path)
+    except ValueError as exc:
+        console.print(f"[red]Comparison failed:[/red] {exc}")
+        return 2
+
+    changes: list[dict[str, str | None]] = []
+    counts = {"added": 0, "removed": 0, "modified": 0, "unchanged": 0}
+    for key in sorted(set(before) | set(after)):
+        old_result = before.get(key)
+        new_result = after.get(key)
+
+        if old_result is None:
+            status = "added"
+        elif new_result is None:
+            status = "removed"
+        elif old_result.sha256.casefold() != new_result.sha256.casefold():
+            status = "modified"
+        else:
+            status = "unchanged"
+        counts[status] += 1
+
+        changes.append(
+            {
+                "path": new_result.path if new_result is not None else old_result.path,
+                "status": status,
+                "before_sha256": old_result.sha256 if old_result is not None else None,
+                "after_sha256": new_result.sha256 if new_result is not None else None,
+            }
+        )
+
+    comparison = {
+        "tool": "Reverse Engineering Intelligence",
+        "comparison_type": "sha256_by_normalized_path",
+        "generated_at_utc": datetime.now(UTC).isoformat(),
+        "before_report": str(before_path),
+        "after_report": str(after_path),
+        "before_files_analyzed": len(before),
+        "after_files_analyzed": len(after),
+        "before_files_failed": before_document.get("files_failed", 0),
+        "after_files_failed": after_document.get("files_failed", 0),
+        "counts": counts,
+        "changes": changes,
+    }
+
+    if before_document.get("files_failed", 0) or after_document.get("files_failed", 0):
+        console.print(
+            "[yellow]Warning:[/yellow] at least one batch report contains failed files; "
+            "the comparison covers successfully analyzed results only."
+        )
+
+    summary = Table(title="Investigation Report Comparison")
+    summary.add_column("Change", style="cyan")
+    summary.add_column("Files", justify="right")
+    for label in ("added", "removed", "modified", "unchanged"):
+        summary.add_row(label.title(), str(counts[label]))
+    console.print(summary)
+
+    changed_items = [item for item in changes if item["status"] != "unchanged"]
+    if changed_items:
+        detail_table = Table(title="File-level changes")
+        detail_table.add_column("Path")
+        detail_table.add_column("Status")
+        detail_table.add_column("Before SHA-256")
+        detail_table.add_column("After SHA-256")
+        for item in changed_items[:100]:
+            detail_table.add_row(
+                str(item["path"]),
+                str(item["status"]).title(),
+                (item["before_sha256"] or "")[:12],
+                (item["after_sha256"] or "")[:12],
+            )
+        if len(changed_items) > 100:
+            detail_table.add_row(
+                f"... +{len(changed_items) - 100} more changes", "", "", ""
+            )
+        console.print(detail_table)
+    else:
+        console.print("No file additions, removals, or SHA-256 changes detected.")
+
+    if output_path is not None:
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps(comparison, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            console.print(f"[red]Could not write comparison report:[/red] {exc}")
+            return 2
+        console.print(f"[green]Comparison report written to[/green] {output_path}")
+
+    return 0
+
+
 def _add_file_analysis_options(parser: argparse.ArgumentParser) -> None:
     """Add shared analysis limits to a command parser."""
     parser.add_argument("--max-strings", type=int, default=500)
@@ -441,6 +601,18 @@ def build_parser() -> argparse.ArgumentParser:
     _add_file_analysis_options(batch_parser)
     batch_parser.set_defaults(handler=_batch)
 
+    compare_parser = commands.add_parser(
+        "compare",
+        help="Compare two single-file or batch JSON reports.",
+    )
+    compare_parser.add_argument("before", help="Earlier JSON analysis report.")
+    compare_parser.add_argument("after", help="Later JSON analysis report.")
+    compare_parser.add_argument(
+        "--output",
+        help="Optional path to write the machine-readable comparison report.",
+    )
+    compare_parser.set_defaults(handler=_compare_reports)
+
     return parser
 
 
@@ -457,11 +629,14 @@ def main() -> None:
         console.print("[red]Minimum string length must be at least 1.[/red]")
         raise SystemExit(2)
 
-    if args.max_strings < 0:
+    if hasattr(args, "max_strings") and args.max_strings < 0:
         console.print("[red]Maximum strings cannot be negative.[/red]")
         raise SystemExit(2)
 
-    if args.max_file_size_mb < 1:
+    if (
+        hasattr(args, "max_file_size_mb")
+        and args.max_file_size_mb < 1
+    ):
         console.print("[red]Maximum file size must be at least 1 MiB.[/red]")
         raise SystemExit(2)
 

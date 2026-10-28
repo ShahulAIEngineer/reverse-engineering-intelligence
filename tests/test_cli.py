@@ -422,3 +422,137 @@ def test_summary_displays_pe_resource_directory(tmp_path, monkeypatch, capsys):
     assert "PE resource entries" in output
     assert "RT_MANIFEST / ID:1 / LANG:1033" in output
     assert "0x00001100" in output
+
+
+
+def _comparison_result(path: str, sha: str) -> dict:
+    """Build a minimal valid file-analysis result for report-comparison tests."""
+    return {
+        "path": path,
+        "name": Path(path).name,
+        "extension": Path(path).suffix,
+        "size_bytes": 12,
+        "sha256": sha,
+        "signature": "Unknown",
+        "entropy_bits_per_byte": 4.0,
+        "printable_strings": [],
+        "pe_metadata": None,
+    }
+
+
+def test_compare_batch_reports_and_write_json_delta(tmp_path, monkeypatch, capsys):
+    before_path = tmp_path / "before.json"
+    after_path = tmp_path / "after.json"
+    output_path = tmp_path / "comparison.json"
+
+    before_path.write_text(
+        json.dumps(
+            {
+                "files_failed": 0,
+                "results": [
+                    _comparison_result("stable.bin", "a" * 64),
+                    _comparison_result("changed.bin", "b" * 64),
+                    _comparison_result("removed.bin", "c" * 64),
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    after_path.write_text(
+        json.dumps(
+            {
+                "files_failed": 0,
+                "results": [
+                    _comparison_result("stable.bin", "a" * 64),
+                    _comparison_result("changed.bin", "d" * 64),
+                    _comparison_result("added.bin", "e" * 64),
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(
+            monkeypatch,
+            [
+                "compare",
+                str(before_path),
+                str(after_path),
+                "--output",
+                str(output_path),
+            ],
+        )
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "Investigation Report Comparison" in output
+    assert "Added" in output
+    assert "Removed" in output
+    assert "Modified" in output
+    assert "stable.bin" not in output
+
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+    assert report["counts"] == {
+        "added": 1,
+        "removed": 1,
+        "modified": 1,
+        "unchanged": 1,
+    }
+    changes_by_path = {entry["path"]: entry for entry in report["changes"]}
+    assert changes_by_path["changed.bin"]["status"] == "modified"
+    assert changes_by_path["added.bin"]["before_sha256"] is None
+    assert changes_by_path["removed.bin"]["after_sha256"] is None
+
+
+def test_compare_single_file_reports_with_same_sha_is_unchanged(tmp_path, monkeypatch):
+    before_path = tmp_path / "before.json"
+    after_path = tmp_path / "after.json"
+    report = _comparison_result("sample.bin", "f" * 64)
+    before_path.write_text(json.dumps(report), encoding="utf-8")
+    after_path.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(monkeypatch, ["compare", str(before_path), str(after_path)])
+
+    assert exc_info.value.code == 0
+
+
+def test_compare_rejects_invalid_json_report(tmp_path, monkeypatch, capsys):
+    before_path = tmp_path / "invalid.json"
+    after_path = tmp_path / "after.json"
+    before_path.write_text("{ definitely not JSON", encoding="utf-8")
+    after_path.write_text(
+        json.dumps(_comparison_result("sample.bin", "f" * 64)),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(monkeypatch, ["compare", str(before_path), str(after_path)])
+
+    assert exc_info.value.code == 2
+    assert "Comparison failed" in capsys.readouterr().out
+
+
+def test_compare_does_not_overwrite_an_input_report(tmp_path, monkeypatch, capsys):
+    before_path = tmp_path / "before.json"
+    after_path = tmp_path / "after.json"
+    before_path.write_text(
+        json.dumps(_comparison_result("before.bin", "a" * 64)),
+        encoding="utf-8",
+    )
+    after_path.write_text(
+        json.dumps(_comparison_result("after.bin", "b" * 64)),
+        encoding="utf-8",
+    )
+    original = before_path.read_text(encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(
+            monkeypatch,
+            ["compare", str(before_path), str(after_path), "--output", str(before_path)],
+        )
+
+    assert exc_info.value.code == 2
+    assert before_path.read_text(encoding="utf-8") == original
+    assert "must not overwrite an input report" in capsys.readouterr().out

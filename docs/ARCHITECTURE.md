@@ -17,6 +17,7 @@
 13. Table parsers use bounded counts and strings and report absent or malformed tables explicitly.
 14. Pydantic models validate the structured analysis result.
 15. The CLI presents human-readable summaries, including PE import/export, resource-tree, certificate-table, debug-directory, and overlay metadata, printable strings, or JSON output. Batch mode supports analyzing multiple files and reporting per-file results and errors.
+16. Report comparison validates single-file or batch JSON reports, matches records by normalized path, compares SHA-256 fingerprints, and emits added/removed/modified/unchanged counts plus an optional JSON delta report.
 
 ## Safety properties
 
@@ -35,4 +36,4 @@ PE parsing validates selected structures and extracts useful metadata; it does n
 
 ## Future extensions
 
-Potential follow-on modules include PE debug-directory and certificate metadata, additional file-format support, optional YARA integration, report comparisons, and a richer evidence trail. Each extension should preserve read-only handling and include appropriate automated tests.
+Potential follow-on modules include optional YARA integration, additional file-format support, reproducible release packaging, and a richer evidence trail. Each extension should preserve read-only handling and include appropriate automated tests.

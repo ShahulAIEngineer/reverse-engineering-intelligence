@@ -18,7 +18,6 @@ from re_intel.analyzers.yara_scanner import (
     YaraUnavailableError,
     scan_file_with_yara,
 )
-
 from re_intel.models import FileAnalysisResult
 
 console = Console()

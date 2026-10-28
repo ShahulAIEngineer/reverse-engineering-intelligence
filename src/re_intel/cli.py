@@ -106,6 +106,30 @@ def _summary(args: argparse.Namespace) -> int:
         table.add_row("PE sections", str(pe.section_count))
         table.add_row("Executable", "Yes" if pe.is_executable else "No")
         table.add_row("DLL", "Yes" if pe.is_dll else "No")
+
+        if pe.sections:
+            section_table = Table(title="PE sections (details)")
+            section_table.add_column("Name")
+            section_table.add_column("Virtual address")
+            section_table.add_column("Virtual size", justify="right")
+            section_table.add_column("Raw offset")
+            section_table.add_column("Raw size", justify="right")
+            section_table.add_column("R/W/X")
+            for section in pe.sections:
+                permissions = (
+                    ("R" if section.readable else "-")
+                    + ("W" if section.writable else "-")
+                    + ("X" if section.executable else "-")
+                )
+                section_table.add_row(
+                    section.name,
+                    f"0x{section.virtual_address:08X}",
+                    str(section.virtual_size),
+                    f"0x{section.raw_offset:08X}",
+                    str(section.raw_size),
+                    permissions,
+                )
+            console.print(section_table)
     else:
         table.add_row("PE metadata", "Not detected")
 

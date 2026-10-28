@@ -1,5 +1,6 @@
 
 import hashlib
+import os
 import struct
 from pathlib import Path
 
@@ -138,6 +139,7 @@ def test_detects_signature_independently_of_extension(tmp_path):
 
 
 
+
 def create_test_pe(
     path,
     *,
@@ -146,10 +148,13 @@ def create_test_pe(
     section_count=3,
 ):
     """Create a minimal synthetic PE header for testing."""
-    data = bytearray(256)
-    data[:2] = b"MZ"
-
     pe_offset = 128
+    # Use the standard optional-header size for the selected PE format.
+    optional_header_size = 240 if machine in (0x8664, 0xAA64) else 224
+    section_table_offset = pe_offset + 24 + optional_header_size
+    data = bytearray(section_table_offset + section_count * 40)
+
+    data[:2] = b"MZ"
     struct.pack_into("<I", data, 0x3C, pe_offset)
     data[pe_offset : pe_offset + 4] = b"PE\x00\x00"
 
@@ -162,11 +167,54 @@ def create_test_pe(
         0,
         0,
         0,
-        0,
+        optional_header_size,
         characteristics,
     )
 
+    optional_magic = 0x020B if machine in (0x8664, 0xAA64) else 0x010B
+    struct.pack_into("<H", data, pe_offset + 24, optional_magic)
+
     path.write_bytes(data)
+
+
+
+def test_extracts_pe_section_metadata(tmp_path):
+    sample = tmp_path / "sections.exe"
+    create_test_pe(sample, machine=0x8664, section_count=1)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_size = struct.unpack_from("<H", data, pe_offset + 4 + 16)[0]
+    section_offset = pe_offset + 24 + optional_size
+
+    data[section_offset:section_offset + 8] = b".text\x00\x00\x00"
+    struct.pack_into("<IIII", data, section_offset + 8, 0x120, 0x1000, 0x200, 0x400)
+    struct.pack_into("<I", data, section_offset + 36, 0x60000020)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+    assert result.pe_metadata is not None
+    assert len(result.pe_metadata.sections) == 1
+    section = result.pe_metadata.sections[0]
+    assert section.name == ".text"
+    assert section.virtual_size == 0x120
+    assert section.virtual_address == 0x1000
+    assert section.raw_size == 0x200
+    assert section.raw_offset == 0x400
+    assert section.readable is True
+    assert section.writable is False
+    assert section.executable is True
+
+
+def test_pe_sections_default_to_empty_for_model_compatibility():
+    from re_intel.models import PEMetadata
+
+    metadata = PEMetadata(
+        machine="x64",
+        section_count=3,
+        is_dll=False,
+        is_executable=True,
+    )
+    assert metadata.sections == []
 
 
 def test_extracts_x64_pe_metadata(tmp_path):
@@ -296,3 +344,198 @@ def test_analyze_file_rejects_file_that_grows_during_read(tmp_path, monkeypatch)
 
     with pytest.raises(ValueError, match="maximum allowed size"):
         analyze_file(sample, max_file_size_mb=1)
+
+def test_rejects_pe_with_invalid_optional_header_magic(tmp_path):
+    sample = tmp_path / "invalid_optional_magic.exe"
+    create_test_pe(sample)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    data[pe_offset + 24 : pe_offset + 26] = b"\x00\x00"
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
+def test_rejects_pe_with_section_table_outside_file(tmp_path):
+    sample = tmp_path / "section_table_outside.exe"
+    create_test_pe(sample)
+    data = sample.read_bytes()
+    sample.write_bytes(data[:-40])
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
+def test_rejects_pe_with_zero_sections(tmp_path):
+    sample = tmp_path / "zero_sections.exe"
+    create_test_pe(sample, section_count=0)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+def test_rejects_pe_offset_beyond_file(tmp_path):
+    sample = tmp_path / "pe_offset_beyond_file.exe"
+    data = bytearray(128)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 0x1000)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+def test_analyze_file_rejects_file_modified_during_read(tmp_path, monkeypatch):
+    """Reject a file modified during analysis without exceeding the size limit."""
+    sample = tmp_path / "modified.bin"
+    sample.write_bytes(b"A" * 100)
+
+    original_open = Path.open
+    modified = False
+
+    class ModifyingReader:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            self.handle.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+        def read(self, size=-1):
+            nonlocal modified
+            data = self.handle.read(size)
+
+            if size == 1024 * 1024 and data and not modified:
+                modified = True
+                with original_open(sample, "r+b") as writer:
+                    writer.seek(0)
+                    writer.write(b"B" * 100)
+                    writer.flush()
+                # Force a timestamp distinct from the initial stat on Windows.
+                os.utime(
+                    sample,
+                    ns=(1_700_000_000_000_000_000, 1_700_000_000_000_000_000),
+                )
+
+            return data
+
+    def open_with_modification(path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+
+        if path == sample and args and args[0] == "rb":
+            return ModifyingReader(handle)
+
+        return handle
+
+    monkeypatch.setattr(Path, "open", open_with_modification)
+
+    with pytest.raises(ValueError, match="File changed during analysis"):
+        analyze_file(sample)
+
+
+def test_rejects_x64_pe_with_pe32_optional_header_magic(tmp_path):
+    sample = tmp_path / "x64_with_pe32_magic.exe"
+    create_test_pe(sample, machine=0x8664)
+
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    struct.pack_into("<H", data, pe_offset + 24, 0x010B)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+@pytest.mark.parametrize(
+    ("machine", "optional_magic", "undersized_length"),
+    [
+        (0x014C, 0x010B, 95),
+        (0x8664, 0x020B, 111),
+    ],
+)
+def test_rejects_undersized_pe_optional_header(
+    tmp_path, machine, optional_magic, undersized_length
+):
+    sample = tmp_path / f"undersized_optional_{machine:04x}.exe"
+    create_test_pe(sample, machine=machine)
+
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    struct.pack_into("<H", data, pe_offset + 4 + 16, undersized_length)
+    struct.pack_into("<H", data, pe_offset + 24, optional_magic)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
+
+
+def test_rejects_truncated_pe_signature(tmp_path):
+    sample = tmp_path / "truncated_signature.exe"
+    data = bytearray(130)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 128)
+    data[128:130] = b"PE"
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
+def test_rejects_truncated_coff_header(tmp_path):
+    sample = tmp_path / "truncated_coff.exe"
+    data = bytearray(150)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 128)
+    data[128:132] = b"PE\x00\x00"
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
+def test_rejects_optional_header_declared_beyond_file(tmp_path):
+    sample = tmp_path / "optional_header_beyond_file.exe"
+    create_test_pe(sample, machine=0x8664)
+
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    struct.pack_into("<H", data, pe_offset + 4 + 16, 0xFFFF)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
+def test_rejects_section_table_truncated_by_one_byte(tmp_path):
+    sample = tmp_path / "section_table_truncated_by_one.exe"
+    create_test_pe(sample, machine=0x8664, section_count=1)
+    sample.write_bytes(sample.read_bytes()[:-1])
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
+def test_rejects_physically_truncated_pe_optional_header(tmp_path):
+    sample = tmp_path / "physically_truncated_optional.exe"
+    create_test_pe(sample, machine=0x8664)
+
+    data = sample.read_bytes()
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    sample.write_bytes(data[: pe_offset + 24 + 80])
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None

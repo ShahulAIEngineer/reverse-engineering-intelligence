@@ -1,4 +1,3 @@
-
 """File analysis utilities for the reverse engineering intelligence toolkit."""
 
 import hashlib
@@ -7,7 +6,7 @@ import struct
 from collections import Counter
 from pathlib import Path
 
-from re_intel.models import FileAnalysisResult, PEMetadata
+from re_intel.models import FileAnalysisResult, PEMetadata, PESection
 
 CHUNK_SIZE = 1024 * 1024
 PE_OFFSET_LOCATION = 0x3C
@@ -71,6 +70,7 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
 
             pe_offset = struct.unpack("<I", offset_data)[0]
 
+            # Require room for the PE signature and complete COFF header.
             if pe_offset < 64 or pe_offset > file_size - 24:
                 return None
 
@@ -92,18 +92,84 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                 characteristics,
             ) = struct.unpack("<HHIIIHH", coff_header)
 
-            if section_count > 96:
+            if not 1 <= section_count <= 96:
                 return None
 
+            # Validate optional-header boundaries.
+            optional_header_offset = pe_offset + 24
+            section_table_offset = optional_header_offset + optional_header_size
+
+            if optional_header_size < 2 or section_table_offset > file_size:
+                return None
+
+            file_handle.seek(optional_header_offset)
             optional_header = file_handle.read(optional_header_size)
+
             if len(optional_header) != optional_header_size:
                 return None
+
+            # PE32 uses 0x10B; PE32+ uses 0x20B.
+            optional_magic = struct.unpack_from("<H", optional_header)[0]
+            if optional_magic not in (0x010B, 0x020B):
+                return None
+
+            # PE32 requires at least 96 bytes; PE32+ requires at least 112.
+            minimum_optional_header_size = {
+                0x010B: 96,
+                0x020B: 112,
+            }[optional_magic]
+            if optional_header_size < minimum_optional_header_size:
+                return None
+
+            # Enforce known machine/optional-header compatibility.
+            expected_magic = {
+                0x014C: 0x010B,  # x86
+                0x01C0: 0x010B,  # ARM
+                0x01C4: 0x010B,  # ARMv7
+                0x8664: 0x020B,  # x64
+                0xAA64: 0x020B,  # ARM64
+            }.get(machine)
+            if expected_magic is not None and optional_magic != expected_magic:
+                return None
+
+            # Each section-table entry is 40 bytes.
+            section_table_size = section_count * 40
+            if section_table_offset + section_table_size > file_size:
+                return None
+
+            sections: list[PESection] = []
+            for section_index in range(section_count):
+                entry_offset = section_table_offset + section_index * 40
+                file_handle.seek(entry_offset)
+                section_entry = file_handle.read(40)
+                if len(section_entry) != 40:
+                    return None
+
+                raw_name = section_entry[0:8].split(b"\x00", 1)[0]
+                section_name = raw_name.decode("ascii", errors="replace") or "<empty>"
+                virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from(
+                    "<IIII", section_entry, 8
+                )
+                section_characteristics = struct.unpack_from("<I", section_entry, 36)[0]
+                sections.append(
+                    PESection(
+                        name=section_name,
+                        virtual_size=virtual_size,
+                        virtual_address=virtual_address,
+                        raw_size=raw_size,
+                        raw_offset=raw_offset,
+                        readable=bool(section_characteristics & 0x40000000),
+                        writable=bool(section_characteristics & 0x80000000),
+                        executable=bool(section_characteristics & 0x20000000),
+                    )
+                )
 
             return PEMetadata(
                 machine=PE_MACHINES.get(machine, f"Unknown (0x{machine:04X})"),
                 section_count=section_count,
                 is_dll=bool(characteristics & 0x2000),
                 is_executable=bool(characteristics & 0x0002),
+                sections=sections,
             )
 
     except (OSError, struct.error, ValueError):
@@ -135,8 +201,16 @@ def analyze_file(
     if not path.is_file():
         raise ValueError(f"Not a regular file: {path}")
 
+    initial_stat = path.stat()
+    initial_size = initial_stat.st_size
+    initial_identity = (
+        initial_stat.st_dev,
+        initial_stat.st_ino,
+        initial_stat.st_size,
+        initial_stat.st_mtime_ns,
+        initial_stat.st_ctime_ns,
+    )
     max_file_size_bytes = max_file_size_mb * BYTES_PER_MIB
-    initial_size = path.stat().st_size
 
     if initial_size > max_file_size_bytes:
         raise ValueError(
@@ -178,11 +252,20 @@ def analyze_file(
 
                     current_string.clear()
 
-    if (
-        len(current_string) >= min_string_length
-        and len(strings) < max_strings
-    ):
+    if len(current_string) >= min_string_length and len(strings) < max_strings:
         strings.append(current_string.decode("ascii"))
+
+    final_stat = path.stat()
+    final_identity = (
+        final_stat.st_dev,
+        final_stat.st_ino,
+        final_stat.st_size,
+        final_stat.st_mtime_ns,
+        final_stat.st_ctime_ns,
+    )
+
+    if final_identity != initial_identity:
+        raise ValueError(f"File changed during analysis: {path}")
 
     return FileAnalysisResult(
         path=str(path.resolve()),

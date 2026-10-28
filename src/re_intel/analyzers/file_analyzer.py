@@ -4,8 +4,8 @@ import hashlib
 import math
 import struct
 from collections import Counter
-from typing import Literal
 from pathlib import Path
+from typing import Literal
 
 from re_intel.models import (
     FileAnalysisResult,
@@ -62,9 +62,6 @@ def _entropy(counts: Counter[int], total: int) -> float:
         entropy -= probability * math.log2(probability)
 
     return entropy
-
-
-def _extract_pe_metadata(path: Path) -> PEMetadata | None:
 
 
 def _rva_to_file_span(
@@ -296,6 +293,8 @@ def _extract_pe_imports(
 
     return [], "malformed"
 
+
+def _extract_pe_metadata(path: Path) -> PEMetadata | None:
     """Extract basic PE metadata, returning None for malformed/non-PE files."""
     try:
         file_size = path.stat().st_size

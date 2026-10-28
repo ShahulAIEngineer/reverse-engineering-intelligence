@@ -20,6 +20,7 @@ from re_intel.models import (
     PEOptionalHeader,
     PEResourceEntry,
     PESection,
+    TriageFinding,
 )
 
 CHUNK_SIZE = 1024 * 1024
@@ -1210,6 +1211,165 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
         return None
 
 
+PROCESS_MANIPULATION_IMPORTS = {
+    "createremotethread",
+    "createremotethreadex",
+    "ntallocatememory",
+    "ntwritevirtualmemory",
+    "openprocess",
+    "queueuserapc",
+    "setthreadcontext",
+    "virtualallocex",
+    "virtualprotectex",
+    "writeprocessmemory",
+}
+
+
+def _generate_triage_findings(
+    *,
+    entropy_bits_per_byte: float,
+    pe_metadata: PEMetadata | None,
+) -> list[TriageFinding]:
+    """Generate explainable investigation clues; never a malware verdict."""
+    findings: list[TriageFinding] = []
+
+    if entropy_bits_per_byte >= 7.2:
+        findings.append(
+            TriageFinding(
+                rule_id="FILE-HIGH-ENTROPY",
+                severity="info",
+                title="High byte entropy",
+                description=(
+                    "High entropy can be caused by compression, encryption, packed "
+                    "content, or other binary data. It is not evidence of malware by itself."
+                ),
+                evidence=[
+                    f"shannon_entropy_bits_per_byte={entropy_bits_per_byte:.6f}"
+                ],
+            )
+        )
+
+    if pe_metadata is None:
+        return findings
+
+    rwx_sections = [
+        section
+        for section in pe_metadata.sections
+        if section.writable and section.executable
+    ]
+    if rwx_sections:
+        findings.append(
+            TriageFinding(
+                rule_id="PE-SECTION-RWX",
+                severity="medium",
+                title="Writable and executable section",
+                description=(
+                    "A section is marked both writable and executable. This can be "
+                    "intentional for JITs, packers, or protectors; confirm whether it "
+                    "is expected for this binary."
+                ),
+                evidence=[
+                    f"section={section.name}, writable=true, executable=true"
+                    for section in rwx_sections[:16]
+                ],
+            )
+        )
+
+    optional_header = pe_metadata.optional_header
+    if optional_header is not None and optional_header.entry_point_rva:
+        entry_point = optional_header.entry_point_rva
+        executable_sections = [
+            section
+            for section in pe_metadata.sections
+            if section.executable
+            and section.virtual_address
+            <= entry_point
+            < section.virtual_address + max(section.virtual_size, section.raw_size)
+        ]
+        if not executable_sections:
+            findings.append(
+                TriageFinding(
+                    rule_id="PE-ENTRYPOINT-NONEXECUTABLE",
+                    severity="medium",
+                    title="Entry point not in an executable section",
+                    description=(
+                        "The recorded entry-point RVA does not fall inside any section "
+                        "marked executable. Malformed metadata, unusual loaders, or "
+                        "nonstandard layouts can explain this; inspect before drawing conclusions."
+                    ),
+                    evidence=[f"entry_point_rva=0x{entry_point:08X}"],
+                )
+            )
+
+    imported_names = {
+        symbol.name.casefold()
+        for module in pe_metadata.imports
+        for symbol in module.symbols
+        if symbol.name is not None
+    }
+    matched_imports = sorted(imported_names & PROCESS_MANIPULATION_IMPORTS)
+    if len(matched_imports) >= 2:
+        findings.append(
+            TriageFinding(
+                rule_id="PE-DUAL-USE-PROCESS-IMPORTS",
+                severity="medium",
+                title="Dual-use process-manipulation imports",
+                description=(
+                    "Multiple imported APIs can allocate memory in, write to, or start "
+                    "threads in another process. Debuggers, accessibility tools, and "
+                    "administration utilities may use these APIs too; inspect call sites and context."
+                ),
+                evidence=[f"import={name}" for name in matched_imports[:16]],
+            )
+        )
+
+    malformed_directories = [
+        label
+        for label, status in (
+            ("import table", pe_metadata.import_table_status),
+            ("export table", pe_metadata.export_table_status),
+            ("certificate table", pe_metadata.certificate_table.status),
+            ("debug directory", pe_metadata.debug_directory_status),
+            ("resource directory", pe_metadata.resource_directory_status),
+        )
+        if status == "malformed"
+    ]
+    if malformed_directories:
+        findings.append(
+            TriageFinding(
+                rule_id="PE-MALFORMED-DIRECTORY",
+                severity="medium",
+                title="Malformed PE directory metadata",
+                description=(
+                    "One or more PE data directories failed bounded structural parsing. "
+                    "Corruption and uncommon layouts are possible explanations; the parser "
+                    "does not infer intent from malformed metadata."
+                ),
+                evidence=malformed_directories,
+            )
+        )
+
+    if pe_metadata.overlay_status == "present" and pe_metadata.overlay_size > 0:
+        findings.append(
+            TriageFinding(
+                rule_id="PE-OVERLAY-DATA",
+                severity="info",
+                title="Trailing overlay data",
+                description=(
+                    "Bytes remain after the estimated PE headers and section raw data. "
+                    "This may include a certificate table, installer content, or other "
+                    "legitimate appended data; inspect the range before interpreting it."
+                ),
+                evidence=[
+                    f"overlay_offset={pe_metadata.overlay_offset}",
+                    f"overlay_size_bytes={pe_metadata.overlay_size}",
+                ],
+            )
+        )
+
+    return findings
+
+
 def analyze_file(
     file_path: str | Path,
     *,
@@ -1301,6 +1461,8 @@ def analyze_file(
     if final_identity != initial_identity:
         raise ValueError(f"File changed during analysis: {path}")
 
+    entropy_bits_per_byte = round(_entropy(byte_counts, bytes_read), 6)
+    pe_metadata = _extract_pe_metadata(path)
     return FileAnalysisResult(
         path=str(path.resolve()),
         name=path.name,
@@ -1308,7 +1470,11 @@ def analyze_file(
         size_bytes=bytes_read,
         sha256=sha256.hexdigest(),
         signature=_signature_hint(header),
-        entropy_bits_per_byte=round(_entropy(byte_counts, bytes_read), 6),
+        entropy_bits_per_byte=entropy_bits_per_byte,
         printable_strings=strings,
-        pe_metadata=_extract_pe_metadata(path),
+        pe_metadata=pe_metadata,
+        triage_findings=_generate_triage_findings(
+            entropy_bits_per_byte=entropy_bits_per_byte,
+            pe_metadata=pe_metadata,
+        ),
     )

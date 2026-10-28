@@ -112,6 +112,10 @@ Available per-section metadata includes:
 
 PE inspection covers selected structures; it is not a complete PE parser.
 
+### 🧭 Evidence-based triage findings
+
+Generates explainable investigation clues for high entropy, writable/executable PE sections, entry points outside executable sections, combinations of dual-use process-manipulation imports, malformed PE directories, and trailing overlay data. Each finding includes a stable rule ID, severity, description, and evidence. These heuristics prioritize analyst review; they do **not** determine whether a file is malicious.
+
 ### 📄 Structured reporting
 
 Uses Pydantic models and JSON serialization to make analysis results easier to inspect and integrate into later workflows.
@@ -297,7 +301,7 @@ Include files in subdirectories:
 re-intel batch examples/fixtures --recursive --output examples/reports/batch-report.json
 ```
 
-The report records the generation timestamp, input directory, whether recursive discovery was enabled, the number of files discovered, successful and failed analyses, individual results, and per-file errors.
+The report records the generation timestamp, input directory, whether recursive discovery was enabled, the number of files discovered, successful and failed analyses, individual results (including triage findings), and per-file errors.
 
 **Exit codes**
 

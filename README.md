@@ -119,6 +119,20 @@ PE inspection covers selected structures; it is not a complete PE parser.
 
 Generates explainable investigation clues for high file or section entropy, writable/executable PE sections, entry points outside executable sections, combinations of dual-use process-manipulation imports, malformed PE directories, and trailing overlay data. Each finding includes a stable rule ID, severity, description, and evidence. These heuristics prioritize analyst review; they do **not** determine whether a file is malicious.
 
+### 🧬 Optional YARA-X rule scanning
+
+Scan an authorized file against a local YARA rules file with the optional YARA-X engine. Reports include the SHA-256 hashes of the target and rules file, matching rule names, namespaces, metadata, pattern-match offsets, elapsed time, and a JSON representation for later review.
+
+YARA-X is an optional dependency and is imported only when a scan is requested. Rule includes are disabled, target size defaults to a 100 MiB limit, each scan has a configurable 1–60 second timeout, and the report omits matched file bytes. A rule match is evidence for investigation, not a malware verdict.
+
+Example:
+
+```powershell
+re-intel yara-scan sample.exe --rules rules.yar --output yara-report.json
+```
+
+Use `--max-file-size-mb` to change the target size limit and `--timeout` to change the scan timeout. Install the optional dependency with `python -m pip install -e ".[yara]"` (or use `".[dev,yara]"` when setting up the development environment).
+
 ### 📄 Structured reporting
 
 Uses Pydantic models and JSON serialization to make analysis results easier to inspect and integrate into later workflows.
@@ -161,6 +175,12 @@ Install the project and development dependencies:
 
 ```powershell
 python -m pip install -e ".[dev]"
+```
+
+YARA-X scanning is optional. To install it alongside the development tools:
+
+```powershell
+python -m pip install -e ".[dev,yara]"
 ```
 
 ### 2. Choose your investigation mode
@@ -339,7 +359,7 @@ The comparison does not execute files or infer that a file is malicious. It comp
 
 ## 🧪 Quality Assurance
 
-The project includes automated tests for file analysis, result models, and CLI behavior, including batch report generation, invalid-directory handling, per-file errors, and single-file or batch-report comparisons.
+The project includes automated tests for file analysis, result models, and CLI behavior, including batch report generation, invalid-directory handling, per-file errors, single-file or batch-report comparisons, YARA-X matches, input limits, and YARA CLI reporting.
 
 Run the tests:
 
@@ -383,13 +403,16 @@ reverse-engineering-intelligence/
 ├── src/
 │   └── re_intel/
 │       ├── analyzers/
-│       │   └── file_analyzer.py
+│       │   ├── file_analyzer.py
+│       │   └── yara_scanner.py
 │       ├── cli.py
 │       └── models.py
 ├── tests/
 │   ├── test_cli.py
 │   ├── test_file_analyzer.py
-│   └── test_models.py
+│   ├── test_models.py
+│   ├── test_yara_cli.py
+│   └── test_yara_scanner.py
 ├── .env.example
 ├── .gitignore
 ├── pyproject.toml
@@ -441,15 +464,13 @@ Only inspect files you own or have permission to analyze. Treat file contents an
 Potential future milestones:
 
 - [ ] Expand PE validation and optional-header analysis.
-- [ ] Add optional YARA rule integration and rule-result reporting.
 - [ ] Add configurable report schemas and machine-readable analysis summaries.
 - [ ] Add more file-format fixtures and malformed-input tests.
 - [ ] Expand resource-use controls and test additional large-file edge cases.
 - [ ] Add reproducible sample reports and richer usage documentation.
-- [ ] Explore optional YARA integration for rule-based scanning.
 - [ ] Expand CI with supported Python-version coverage and security-focused tests.
 
-These are planned improvements, not features currently claimed as implemented.
+These are planned improvements beyond the current static-analysis and optional YARA-X feature set.
 
 ---
 

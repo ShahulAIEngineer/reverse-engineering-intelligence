@@ -13,6 +13,11 @@ from re_intel.analyzers.file_analyzer import (
     DEFAULT_MAX_FILE_SIZE_MB,
     analyze_file,
 )
+from re_intel.analyzers.yara_scanner import (
+    DEFAULT_SCAN_TIMEOUT_SECONDS,
+    YaraUnavailableError,
+    scan_file_with_yara,
+)
 from re_intel.models import FileAnalysisResult
 
 console = Console()
@@ -555,6 +560,94 @@ def _compare_reports(args: argparse.Namespace) -> int:
     return 0
 
 
+def _yara_scan(args: argparse.Namespace) -> int:
+    """Scan a file with a local YARA-X rules file."""
+    target_path = Path(args.path)
+    rules_path = Path(args.rules)
+    output_path = Path(args.output) if args.output else None
+
+    if output_path is not None:
+        protected_inputs = {target_path.resolve(), rules_path.resolve()}
+        if output_path.resolve() in protected_inputs:
+            console.print(
+                "[red]Output must not overwrite the target or rules file.[/red]"
+            )
+            return 2
+
+    try:
+        report = scan_file_with_yara(
+            target_path,
+            rules_path,
+            max_file_size_mb=args.max_file_size_mb,
+            timeout_seconds=args.timeout,
+        )
+    except (OSError, ValueError, YaraUnavailableError) as exc:
+        console.print(f"[red]YARA scan failed:[/red] {exc}")
+        return 2
+
+    if output_path is not None:
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                report.model_dump_json(indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            console.print(f"[red]Could not write YARA report:[/red] {exc}")
+            return 2
+
+    summary = Table(title="YARA-X Scan Summary")
+    summary.add_column("Property", style="cyan")
+    summary.add_column("Value")
+    summary.add_row("Target", report.path)
+    summary.add_row("Size (bytes)", str(report.size_bytes))
+    summary.add_row("SHA-256", report.sha256)
+    summary.add_row("Rules file", report.rules_path)
+    summary.add_row("Rules SHA-256", report.rules_sha256)
+    summary.add_row("Matched rules", str(report.matched_rule_count))
+    summary.add_row("Elapsed (seconds)", f"{report.elapsed_seconds:.6f}")
+
+    if output_path is not None:
+        summary.add_row("JSON report", str(output_path))
+
+    console.print(summary)
+
+    if report.matching_rules:
+        matches_table = Table(title="YARA-X Rule Matches")
+        matches_table.add_column("Rule")
+        matches_table.add_column("Namespace")
+        matches_table.add_column("Patterns")
+        matches_table.add_column("Metadata")
+
+        for rule in report.matching_rules:
+            patterns = ", ".join(
+                f"{pattern.identifier} ({pattern.reported_match_count})"
+                for pattern in rule.patterns
+            ) or "(condition-only match)"
+            metadata = "; ".join(
+                f"{key}={value}" for key, value in rule.metadata.items()
+            )
+            matches_table.add_row(
+                rule.identifier,
+                rule.namespace,
+                patterns,
+                metadata,
+            )
+
+        console.print(matches_table)
+    else:
+        console.print(
+            "No YARA rules matched. This does not establish that the file is safe."
+        )
+
+    if report.matching_rules_truncated:
+        console.print(
+            "[yellow]Some matching rules were omitted from the recorded details.[/yellow]"
+        )
+
+    return 0
+
+
 def _add_file_analysis_options(parser: argparse.ArgumentParser) -> None:
     """Add shared analysis limits to a command parser."""
     parser.add_argument("--max-strings", type=int, default=500)
@@ -647,6 +740,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional path to write the machine-readable comparison report.",
     )
     compare_parser.set_defaults(handler=_compare_reports)
+
+    yara_parser = commands.add_parser(
+        "yara-scan",
+        help="Scan a file with a local YARA-X rules file.",
+    )
+    yara_parser.add_argument(
+        "path",
+        help="Path to a file you are authorized to inspect.",
+    )
+    yara_parser.add_argument(
+        "--rules",
+        required=True,
+        help="Path to a local YARA rules file.",
+    )
+    yara_parser.add_argument(
+        "--output",
+        help="Optional path for a JSON scan report.",
+    )
+    yara_parser.add_argument(
+        "--max-file-size-mb",
+        type=int,
+        default=DEFAULT_MAX_FILE_SIZE_MB,
+        help=(
+            "Maximum target file size in MiB "
+            f"(default: {DEFAULT_MAX_FILE_SIZE_MB})."
+        ),
+    )
+    yara_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_SCAN_TIMEOUT_SECONDS,
+        help="Per-scan timeout in seconds (1–60).",
+    )
+    yara_parser.set_defaults(handler=_yara_scan)
 
     return parser
 

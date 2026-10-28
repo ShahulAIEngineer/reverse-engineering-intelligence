@@ -138,6 +138,7 @@ def test_detects_signature_independently_of_extension(tmp_path):
 
 
 
+
 def create_test_pe(
     path,
     *,
@@ -146,10 +147,12 @@ def create_test_pe(
     section_count=3,
 ):
     """Create a minimal synthetic PE header for testing."""
-    data = bytearray(256)
-    data[:2] = b"MZ"
-
     pe_offset = 128
+    optional_header_size = 2
+    section_table_offset = pe_offset + 24 + optional_header_size
+    data = bytearray(section_table_offset + section_count * 40)
+
+    data[:2] = b"MZ"
     struct.pack_into("<I", data, 0x3C, pe_offset)
     data[pe_offset : pe_offset + 4] = b"PE\x00\x00"
 
@@ -162,11 +165,15 @@ def create_test_pe(
         0,
         0,
         0,
-        0,
+        optional_header_size,
         characteristics,
     )
 
+    optional_magic = 0x020B if machine in (0x8664, 0xAA64) else 0x010B
+    struct.pack_into("<H", data, pe_offset + 24, optional_magic)
+
     path.write_bytes(data)
+
 
 
 def test_extracts_x64_pe_metadata(tmp_path):
@@ -296,3 +303,35 @@ def test_analyze_file_rejects_file_that_grows_during_read(tmp_path, monkeypatch)
 
     with pytest.raises(ValueError, match="maximum allowed size"):
         analyze_file(sample, max_file_size_mb=1)
+
+def test_rejects_pe_with_invalid_optional_header_magic(tmp_path):
+    sample = tmp_path / "invalid_optional_magic.exe"
+    create_test_pe(sample)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    data[pe_offset + 24 : pe_offset + 26] = b"\x00\x00"
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
+def test_rejects_pe_with_section_table_outside_file(tmp_path):
+    sample = tmp_path / "section_table_outside.exe"
+    create_test_pe(sample)
+    data = sample.read_bytes()
+    sample.write_bytes(data[:-40])
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
+def test_rejects_pe_with_zero_sections(tmp_path):
+    sample = tmp_path / "zero_sections.exe"
+    create_test_pe(sample, section_count=0)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None

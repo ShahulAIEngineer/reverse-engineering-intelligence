@@ -71,6 +71,7 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
 
             pe_offset = struct.unpack("<I", offset_data)[0]
 
+            # Require room for the PE signature and complete COFF header.
             if pe_offset < 64 or pe_offset > file_size - 24:
                 return None
 
@@ -92,11 +93,30 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                 characteristics,
             ) = struct.unpack("<HHIIIHH", coff_header)
 
-            if section_count > 96:
+            if not 1 <= section_count <= 96:
                 return None
 
+            # Validate optional-header boundaries.
+            optional_header_offset = pe_offset + 24
+            section_table_offset = optional_header_offset + optional_header_size
+
+            if optional_header_size < 2 or section_table_offset > file_size:
+                return None
+
+            file_handle.seek(optional_header_offset)
             optional_header = file_handle.read(optional_header_size)
+
             if len(optional_header) != optional_header_size:
+                return None
+
+            # PE32 uses 0x10B; PE32+ uses 0x20B.
+            optional_magic = struct.unpack_from("<H", optional_header)[0]
+            if optional_magic not in (0x010B, 0x020B):
+                return None
+
+            # Each section-table entry is 40 bytes.
+            section_table_size = section_count * 40
+            if section_table_offset + section_table_size > file_size:
                 return None
 
             return PEMetadata(
@@ -178,10 +198,7 @@ def analyze_file(
 
                     current_string.clear()
 
-    if (
-        len(current_string) >= min_string_length
-        and len(strings) < max_strings
-    ):
+    if len(current_string) >= min_string_length and len(strings) < max_strings:
         strings.append(current_string.decode("ascii"))
 
     return FileAnalysisResult(

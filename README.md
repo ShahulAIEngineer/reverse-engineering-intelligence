@@ -119,6 +119,20 @@ PE inspection covers selected structures; it is not a complete PE parser.
 
 Generates explainable investigation clues for high file or section entropy, writable/executable PE sections, entry points outside executable sections, combinations of dual-use process-manipulation imports, malformed PE directories, and trailing overlay data. Each finding includes a stable rule ID, severity, description, and evidence. These heuristics prioritize analyst review; they do **not** determine whether a file is malicious.
 
+### 🧬 Optional YARA-X rule scanning
+
+Scan an authorized file against a local YARA rules file with the optional YARA-X engine. Reports include the SHA-256 hashes of the target and rules file, matching rule names, namespaces, metadata, pattern-match offsets, elapsed time, and a JSON representation for later review.
+
+YARA-X is an optional dependency and is imported only when a scan is requested. Rule includes are disabled, target size defaults to a 100 MiB limit, each scan has a configurable 1–60 second timeout, and the report omits matched file bytes. A rule match is evidence for investigation, not a malware verdict.
+
+Example:
+
+```powershell
+re-intel yara-scan sample.exe --rules rules.yar --output yara-report.json
+```
+
+Use `--max-file-size-mb` to change the target size limit and `--timeout` to change the scan timeout. Install the optional dependency with `python -m pip install -e ".[yara]"` (or use `".[dev,yara]"` when setting up the development environment).
+
 ### 📄 Structured reporting
 
 Uses Pydantic models and JSON serialization to make analysis results easier to inspect and integrate into later workflows.
@@ -161,6 +175,12 @@ Install the project and development dependencies:
 
 ```powershell
 python -m pip install -e ".[dev]"
+```
+
+YARA-X scanning is optional. To install it alongside the development tools:
+
+```powershell
+python -m pip install -e ".[dev,yara]"
 ```
 
 ### 2. Choose your investigation mode
@@ -339,7 +359,7 @@ The comparison does not execute files or infer that a file is malicious. It comp
 
 ## 🧪 Quality Assurance
 
-The project includes automated tests for file analysis, result models, and CLI behavior, including batch report generation, invalid-directory handling, per-file errors, and single-file or batch-report comparisons.
+The project includes automated tests for file analysis, result models, and CLI behavior, including batch report generation, invalid-directory handling, per-file errors, single-file or batch-report comparisons, YARA-X matches, input limits, and YARA CLI reporting.
 
 Run the tests:
 

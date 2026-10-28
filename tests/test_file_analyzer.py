@@ -178,8 +178,6 @@ def create_test_pe(
 
 
 
-def test_extracts_pe_section_metadata(tmp_path):
-
 def create_test_pe_with_imports(path, *, machine=0x8664, symbols=None):
     """Create a small synthetic PE containing a valid import directory."""
     if symbols is None:
@@ -298,8 +296,6 @@ def test_pe_sections_default_to_empty_for_model_compatibility():
     assert metadata.sections == []
 
 
-def test_extracts_x64_pe_metadata(tmp_path):
-
 @pytest.mark.parametrize("machine", [0x014C, 0x8664])
 def test_extracts_pe_import_table_and_named_symbols(tmp_path, machine):
     sample = tmp_path / "imports.exe"
@@ -358,7 +354,7 @@ def test_reports_absent_pe_import_directory(tmp_path):
     assert result.pe_metadata.imports == []
 
 
-
+def test_extracts_x64_pe_metadata(tmp_path):
     sample = tmp_path / "sample.exe"
     create_test_pe(sample, machine=0x8664, section_count=4)
 

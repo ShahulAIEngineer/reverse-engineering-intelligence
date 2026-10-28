@@ -300,7 +300,7 @@ python -m ruff check src tests
 
 Run both before committing changes. GitHub Actions runs the configured CI workflow on pushes and pull requests.
 
-**Current development milestone:** The latest recorded local run passed 23 tests, and Ruff reported no issues. Rerun the commands above after changes to verify the current working tree.
+**Current development milestone:** The latest recorded local run passed 32 tests, and Ruff reported no issues. Rerun the commands above after changes to verify the current working tree.
 
 ---
 
@@ -381,7 +381,7 @@ Potential future milestones for this project:
 - [ ] Add stronger PE validation and optional-header details.
 - [ ] Add configurable report schemas and machine-readable analysis summaries.
 - [ ] Add more file-format fixtures and malformed-input tests.
-- [ ] Add explicit size limits and resource-use controls for large files.
+- [ ] Expand resource-use controls and test additional large-file edge cases.
 - [ ] Add reproducible sample reports and richer usage documentation.
 - [ ] Explore optional YARA integration for rule-based scanning.
 - [ ] Expand CI with supported Python-version coverage and security-focused tests.

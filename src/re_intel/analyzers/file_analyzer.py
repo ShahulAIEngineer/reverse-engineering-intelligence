@@ -3,6 +3,7 @@
 import hashlib
 import math
 import struct
+import uuid
 from collections import Counter
 from pathlib import Path
 from typing import Literal
@@ -11,6 +12,7 @@ from re_intel.models import (
     FileAnalysisResult,
     PECertificateEntry,
     PECertificateTable,
+    PEDebugEntry,
     PEExportSymbol,
     PEImportModule,
     PEImportSymbol,
@@ -28,6 +30,27 @@ MAX_PE_IMPORT_SYMBOLS = 10_000
 MAX_PE_EXPORTS = 20_000
 MAX_PE_STRING_LENGTH = 4096
 MAX_PE_CERTIFICATE_ENTRIES = 64
+MAX_PE_DEBUG_ENTRIES = 128
+
+PE_DEBUG_TYPES = {
+    0: "Unknown",
+    1: "COFF",
+    2: "CodeView",
+    3: "FPO",
+    4: "Misc",
+    5: "Exception",
+    6: "Fixup",
+    7: "OMAP to source",
+    8: "OMAP from source",
+    9: "Borland",
+    11: "CLSID",
+    12: "VC feature",
+    13: "POGO",
+    16: "Reproducible build",
+    17: "Embedded portable PDB",
+    19: "PDB checksum",
+    20: "Extended DLL characteristics",
+}
 
 PE_CERTIFICATE_TYPES = {
     0x0001: "X.509",
@@ -660,6 +683,135 @@ def _extract_pe_certificate_table(
     )
 
 
+def _extract_pe_debug_directory(
+    file_handle,
+    *,
+    optional_header: bytes,
+    optional_magic: int,
+    sections: list[PESection],
+    file_size: int,
+    size_of_headers: int,
+) -> tuple[list[PEDebugEntry], Literal["not_present", "parsed", "malformed"]]:
+    """Parse the bounded PE debug directory and RSDS CodeView metadata."""
+    count_offset = 92 if optional_magic == 0x010B else 108
+    directories_offset = 96 if optional_magic == 0x010B else 112
+
+    if len(optional_header) < count_offset + 4:
+        return [], "malformed"
+
+    directory_count = struct.unpack_from("<I", optional_header, count_offset)[0]
+    if directory_count <= 6:
+        return [], "not_present"
+
+    directory_end = directories_offset + (6 + 1) * 8
+    if len(optional_header) < directory_end:
+        return [], "malformed"
+
+    debug_rva, debug_size = struct.unpack_from(
+        "<II", optional_header, directories_offset + 6 * 8
+    )
+    if debug_rva == 0 and debug_size == 0:
+        return [], "not_present"
+    if debug_rva == 0 or debug_size == 0 or debug_size % 28:
+        return [], "malformed"
+
+    entry_count = debug_size // 28
+    if entry_count > MAX_PE_DEBUG_ENTRIES:
+        return [], "malformed"
+
+    directory_data = _read_rva_bytes_at_rva(
+        file_handle,
+        debug_rva,
+        debug_size,
+        sections=sections,
+        file_size=file_size,
+        size_of_headers=size_of_headers,
+    )
+    if directory_data is None:
+        return [], "malformed"
+
+    entries: list[PEDebugEntry] = []
+    for index in range(entry_count):
+        record = directory_data[index * 28 : (index + 1) * 28]
+        (
+            characteristics,
+            timestamp,
+            major_version,
+            minor_version,
+            debug_type,
+            size_of_data,
+            address_of_raw_data,
+            pointer_to_raw_data,
+        ) = struct.unpack("<IIHHIIII", record)
+
+        entry = PEDebugEntry(
+            characteristics=characteristics,
+            timestamp=timestamp,
+            major_version=major_version,
+            minor_version=minor_version,
+            debug_type=debug_type,
+            debug_type_name=PE_DEBUG_TYPES.get(debug_type, f"Unknown ({debug_type})"),
+            size_of_data=size_of_data,
+            address_of_raw_data=address_of_raw_data,
+            pointer_to_raw_data=pointer_to_raw_data,
+        )
+
+        if debug_type == 2 and size_of_data >= 4:
+            # Prefer the raw file pointer. If absent, map the data RVA through
+            # the bounded headers/section raw ranges.
+            if pointer_to_raw_data:
+                if (
+                    pointer_to_raw_data > file_size
+                    or size_of_data > file_size - pointer_to_raw_data
+                ):
+                    return [], "malformed"
+                payload_offset = pointer_to_raw_data
+            else:
+                payload_span = _rva_to_file_span(
+                    address_of_raw_data,
+                    sections=sections,
+                    file_size=file_size,
+                    size_of_headers=size_of_headers,
+                )
+                if payload_span is None or payload_span[1] < size_of_data:
+                    return [], "malformed"
+                payload_offset = payload_span[0]
+
+            if size_of_data > 0 and address_of_raw_data == 0 and pointer_to_raw_data == 0:
+                return [], "malformed"
+
+            # Cap memory use: RSDS consists of 24 fixed bytes followed by a
+            # bounded, null-terminated PDB path.
+            payload_limit = min(size_of_data, 24 + MAX_PE_STRING_LENGTH + 1)
+            file_handle.seek(payload_offset)
+            payload = file_handle.read(payload_limit)
+            if len(payload) != payload_limit:
+                return [], "malformed"
+
+            if payload.startswith(b"RSDS"):
+                if size_of_data < 25 or len(payload) < 25:
+                    return [], "malformed"
+                terminator = payload.find(b"\x00", 24)
+                if terminator < 0:
+                    return [], "malformed"
+
+                pdb_guid = str(uuid.UUID(bytes_le=payload[4:20]))
+                pdb_age = struct.unpack_from("<I", payload, 20)[0]
+                pdb_path = payload[24:terminator].decode("ascii", errors="replace")
+                entry = entry.model_copy(
+                    update={
+                        "codeview_format": "RSDS",
+                        "pdb_guid": pdb_guid,
+                        "pdb_age": pdb_age,
+                        "pdb_path": pdb_path,
+                    }
+                )
+
+        entries.append(entry)
+
+    return entries, "parsed"
+
+
 def _extract_pe_overlay(
     *,
     file_size: int,
@@ -833,6 +985,14 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                 optional_magic=optional_magic,
                 file_size=file_size,
             )
+            debug_entries, debug_directory_status = _extract_pe_debug_directory(
+                file_handle,
+                optional_header=optional_header,
+                optional_magic=optional_magic,
+                sections=sections,
+                file_size=file_size,
+                size_of_headers=size_of_headers,
+            )
             overlay_status, overlay_offset, overlay_size = _extract_pe_overlay(
                 file_size=file_size,
                 sections=sections,
@@ -852,6 +1012,8 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                 exports=exports,
                 optional_header=optional_header_metadata,
                 certificate_table=certificate_table,
+                debug_directory_status=debug_directory_status,
+                debug_entries=debug_entries,
                 overlay_status=overlay_status,
                 overlay_offset=overlay_offset,
                 overlay_size=overlay_size,

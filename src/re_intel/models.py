@@ -46,6 +46,24 @@ class PEExportSymbol(BaseModel):
     forwarder: str | None = Field(default=None, min_length=1, max_length=4096)
 
 
+class PEDebugEntry(BaseModel):
+    """Selected IMAGE_DEBUG_DIRECTORY fields and optional RSDS CodeView details."""
+
+    characteristics: int = Field(ge=0, le=0xFFFFFFFF)
+    timestamp: int = Field(ge=0, le=0xFFFFFFFF)
+    major_version: int = Field(ge=0, le=0xFFFF)
+    minor_version: int = Field(ge=0, le=0xFFFF)
+    debug_type: int = Field(ge=0, le=0xFFFFFFFF)
+    debug_type_name: str = Field(min_length=1, max_length=96)
+    size_of_data: int = Field(ge=0, le=0xFFFFFFFF)
+    address_of_raw_data: int = Field(ge=0, le=0xFFFFFFFF)
+    pointer_to_raw_data: int = Field(ge=0, le=0xFFFFFFFF)
+    codeview_format: Literal["RSDS"] | None = None
+    pdb_guid: str | None = Field(default=None, max_length=36)
+    pdb_age: int | None = Field(default=None, ge=0, le=0xFFFFFFFF)
+    pdb_path: str | None = Field(default=None, max_length=4096)
+
+
 class PECertificateEntry(BaseModel):
     """Structural metadata for one WIN_CERTIFICATE record."""
 
@@ -98,6 +116,8 @@ class PEMetadata(BaseModel):
     exports: list[PEExportSymbol] = Field(default_factory=list)
     optional_header: PEOptionalHeader | None = None
     certificate_table: PECertificateTable = Field(default_factory=PECertificateTable)
+    debug_directory_status: Literal["not_present", "parsed", "malformed"] = "not_present"
+    debug_entries: list[PEDebugEntry] = Field(default_factory=list)
     overlay_status: Literal["not_present", "present", "uncertain"] = "not_present"
     overlay_offset: int | None = Field(default=None, ge=0)
     overlay_size: int = Field(default=0, ge=0)

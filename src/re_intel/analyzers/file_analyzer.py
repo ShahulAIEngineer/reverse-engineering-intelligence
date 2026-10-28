@@ -14,11 +14,11 @@ from re_intel.models import (
     PECertificateTable,
     PEDebugEntry,
     PEExportSymbol,
-    PEResourceEntry,
     PEImportModule,
     PEImportSymbol,
     PEMetadata,
     PEOptionalHeader,
+    PEResourceEntry,
     PESection,
 )
 

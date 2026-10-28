@@ -21,8 +21,6 @@ def invoke_cli(monkeypatch, arguments: list[str]) -> None:
     main()
 
 
-def test_batch_generates_json_report(
-
 def test_summary_displays_pe_import_table(tmp_path, monkeypatch, capsys):
     """Summary output should surface parsed PE import modules and symbols."""
     sample = tmp_path / "sample.exe"
@@ -67,7 +65,7 @@ def test_summary_displays_pe_import_table(tmp_path, monkeypatch, capsys):
     assert "ordinal 7" in output
 
 
-
+def test_batch_generates_json_report(
     tmp_path: Path,
     monkeypatch,
 ) -> None:

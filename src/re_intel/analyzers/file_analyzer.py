@@ -113,6 +113,14 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
             if optional_magic not in (0x010B, 0x020B):
                 return None
 
+            # PE32 requires at least 96 bytes; PE32+ requires at least 112.
+            minimum_optional_header_size = {
+                0x010B: 96,
+                0x020B: 112,
+            }[optional_magic]
+            if optional_header_size < minimum_optional_header_size:
+                return None
+
             # Enforce known machine/optional-header compatibility.
             expected_magic = {
                 0x014C: 0x010B,  # x86

@@ -148,7 +148,8 @@ def create_test_pe(
 ):
     """Create a minimal synthetic PE header for testing."""
     pe_offset = 128
-    optional_header_size = 2
+    # Use the standard optional-header size for the selected PE format.
+    optional_header_size = 240 if machine in (0x8664, 0xAA64) else 224
     section_table_offset = pe_offset + 24 + optional_header_size
     data = bytearray(section_table_offset + section_count * 40)
 
@@ -400,6 +401,42 @@ def test_rejects_x64_pe_with_pe32_optional_header_magic(tmp_path):
     pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
     struct.pack_into("<H", data, pe_offset + 24, 0x010B)
     sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+@pytest.mark.parametrize(
+    ("machine", "optional_magic", "undersized_length"),
+    [
+        (0x014C, 0x010B, 95),
+        (0x8664, 0x020B, 111),
+    ],
+)
+def test_rejects_undersized_pe_optional_header(
+    tmp_path, machine, optional_magic, undersized_length
+):
+    sample = tmp_path / f"undersized_optional_{machine:04x}.exe"
+    create_test_pe(sample, machine=machine)
+
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    struct.pack_into("<H", data, pe_offset + 4 + 16, undersized_length)
+    struct.pack_into("<H", data, pe_offset + 24, optional_magic)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
+def test_rejects_physically_truncated_pe_optional_header(tmp_path):
+    sample = tmp_path / "physically_truncated_optional.exe"
+    create_test_pe(sample, machine=0x8664)
+
+    data = sample.read_bytes()
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    sample.write_bytes(data[: pe_offset + 24 + 80])
 
     result = analyze_file(sample)
 

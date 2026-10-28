@@ -390,3 +390,17 @@ def test_analyze_file_rejects_file_modified_during_read(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="File changed during analysis"):
         analyze_file(sample)
+
+
+def test_rejects_x64_pe_with_pe32_optional_header_magic(tmp_path):
+    sample = tmp_path / "x64_with_pe32_magic.exe"
+    create_test_pe(sample, machine=0x8664)
+
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    struct.pack_into("<H", data, pe_offset + 24, 0x010B)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None

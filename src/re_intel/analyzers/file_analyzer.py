@@ -1,4 +1,3 @@
-
 """File analysis utilities for the reverse engineering intelligence toolkit."""
 
 import hashlib
@@ -112,6 +111,17 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
             # PE32 uses 0x10B; PE32+ uses 0x20B.
             optional_magic = struct.unpack_from("<H", optional_header)[0]
             if optional_magic not in (0x010B, 0x020B):
+                return None
+
+            # Enforce known machine/optional-header compatibility.
+            expected_magic = {
+                0x014C: 0x010B,  # x86
+                0x01C0: 0x010B,  # ARM
+                0x01C4: 0x010B,  # ARMv7
+                0x8664: 0x020B,  # x64
+                0xAA64: 0x020B,  # ARM64
+            }.get(machine)
+            if expected_magic is not None and optional_magic != expected_magic:
                 return None
 
             # Each section-table entry is 40 bytes.

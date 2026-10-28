@@ -10,6 +10,8 @@ from typing import Literal
 from re_intel.models import (
     FileAnalysisResult,
     PEExportSymbol,
+    PECertificateEntry,
+    PECertificateTable,
     PEImportModule,
     PEImportSymbol,
     PEMetadata,
@@ -25,6 +27,15 @@ MAX_PE_IMPORT_MODULES = 512
 MAX_PE_IMPORT_SYMBOLS = 10_000
 MAX_PE_EXPORTS = 20_000
 MAX_PE_STRING_LENGTH = 4096
+MAX_PE_CERTIFICATE_ENTRIES = 64
+
+PE_CERTIFICATE_TYPES = {
+    0x0001: "X.509",
+    0x0002: "PKCS #7 SignedData",
+    0x0003: "Reserved",
+    0x0004: "Terminal Server Protocol Stack",
+    0xFFFF: "Future",
+}
 
 PE_SUBSYSTEMS = {
     0: "Unknown",
@@ -539,6 +550,151 @@ def _extract_pe_exports(
     return exports, "parsed"
 
 
+def _extract_pe_certificate_table(
+    file_handle,
+    *,
+    optional_header: bytes,
+    optional_magic: int,
+    file_size: int,
+) -> PECertificateTable:
+    """Parse bounded WIN_CERTIFICATE record headers from the PE security directory.
+
+    The security directory uses a file offset, not an RVA. Payloads are never
+    decoded or cryptographically verified; only record boundaries and headers
+    are inspected.
+    """
+    count_offset = 92 if optional_magic == 0x010B else 108
+    directories_offset = 96 if optional_magic == 0x010B else 112
+
+    if len(optional_header) < count_offset + 4:
+        return PECertificateTable(status="malformed")
+
+    directory_count = struct.unpack_from("<I", optional_header, count_offset)[0]
+    if directory_count <= 4:
+        return PECertificateTable()
+    security_directory_end = directories_offset + (4 + 1) * 8
+    if len(optional_header) < security_directory_end:
+        return PECertificateTable(status="malformed")
+
+    certificate_offset, certificate_size = struct.unpack_from(
+        "<II", optional_header, directories_offset + 4 * 8
+    )
+    if certificate_offset == 0 and certificate_size == 0:
+        return PECertificateTable()
+    if certificate_offset == 0 or certificate_size < 8:
+        return PECertificateTable(
+            status="malformed",
+            file_offset=certificate_offset or None,
+            size=certificate_size,
+        )
+    if certificate_offset % 8 or certificate_offset > file_size:
+        return PECertificateTable(
+            status="malformed",
+            file_offset=certificate_offset,
+            size=certificate_size,
+        )
+    if certificate_size > file_size - certificate_offset:
+        return PECertificateTable(
+            status="malformed",
+            file_offset=certificate_offset,
+            size=certificate_size,
+        )
+
+    entries: list[PECertificateEntry] = []
+    cursor = 0
+    while cursor < certificate_size:
+        remaining = certificate_size - cursor
+        if remaining < 8 or len(entries) >= MAX_PE_CERTIFICATE_ENTRIES:
+            return PECertificateTable(
+                status="malformed",
+                file_offset=certificate_offset,
+                size=certificate_size,
+            )
+
+        file_handle.seek(certificate_offset + cursor)
+        header = file_handle.read(8)
+        if len(header) != 8:
+            return PECertificateTable(
+                status="malformed",
+                file_offset=certificate_offset,
+                size=certificate_size,
+            )
+
+        length, revision, certificate_type = struct.unpack("<IHH", header)
+        if length < 8 or length > remaining:
+            return PECertificateTable(
+                status="malformed",
+                file_offset=certificate_offset,
+                size=certificate_size,
+            )
+
+        entries.append(
+            PECertificateEntry(
+                file_offset=certificate_offset + cursor,
+                length=length,
+                revision=revision,
+                certificate_type=certificate_type,
+                certificate_type_name=PE_CERTIFICATE_TYPES.get(
+                    certificate_type, f"Unknown (0x{certificate_type:04X})"
+                ),
+            )
+        )
+
+        aligned_length = (length + 7) & ~7
+        if aligned_length > remaining:
+            if length != remaining:
+                return PECertificateTable(
+                    status="malformed",
+                    file_offset=certificate_offset,
+                    size=certificate_size,
+                )
+            cursor += length
+        else:
+            cursor += aligned_length
+
+    return PECertificateTable(
+        status="parsed",
+        file_offset=certificate_offset,
+        size=certificate_size,
+        entries=entries,
+    )
+
+
+def _extract_pe_overlay(
+    *,
+    file_size: int,
+    sections: list[PESection],
+    size_of_headers: int,
+    section_table_end: int,
+) -> tuple[Literal["not_present", "present", "uncertain"], int | None, int]:
+    """Estimate trailing overlay bytes beyond PE headers and section raw data.
+
+    Certificate tables are stored at file offsets and may be part of the
+    overlay. Invalid or truncated section raw-data ranges make the estimate
+    uncertain rather than producing a misleading offset.
+    """
+    if size_of_headers < 0 or size_of_headers > file_size:
+        return "uncertain", None, 0
+    if section_table_end < 0 or section_table_end > file_size:
+        return "uncertain", None, 0
+
+    overlay_start = max(size_of_headers, section_table_end)
+    for section in sections:
+        if section.raw_size == 0:
+            continue
+        raw_end = section.raw_offset + section.raw_size
+        if section.raw_offset < section_table_end or raw_end > file_size:
+            return "uncertain", None, 0
+        overlay_start = max(overlay_start, raw_end)
+
+    if overlay_start > file_size:
+        return "uncertain", None, 0
+    overlay_size = file_size - overlay_start
+    if overlay_size == 0:
+        return "not_present", overlay_start, 0
+    return "present", overlay_start, overlay_size
+
+
 def _extract_pe_metadata(path: Path) -> PEMetadata | None:
     """Extract basic PE metadata, returning None for malformed/non-PE files."""
     try:
@@ -671,6 +827,18 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                 file_size=file_size,
                 size_of_headers=size_of_headers,
             )
+            certificate_table = _extract_pe_certificate_table(
+                file_handle,
+                optional_header=optional_header,
+                optional_magic=optional_magic,
+                file_size=file_size,
+            )
+            overlay_status, overlay_offset, overlay_size = _extract_pe_overlay(
+                file_size=file_size,
+                sections=sections,
+                size_of_headers=size_of_headers,
+                section_table_end=section_table_offset + section_table_size,
+            )
 
             return PEMetadata(
                 machine=PE_MACHINES.get(machine, f"Unknown (0x{machine:04X})"),
@@ -683,6 +851,10 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                 export_table_status=export_table_status,
                 exports=exports,
                 optional_header=optional_header_metadata,
+                certificate_table=certificate_table,
+                overlay_status=overlay_status,
+                overlay_offset=overlay_offset,
+                overlay_size=overlay_size,
             )
 
     except (OSError, struct.error, ValueError):

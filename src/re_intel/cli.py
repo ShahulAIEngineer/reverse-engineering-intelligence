@@ -127,6 +127,24 @@ def _summary(args: argparse.Namespace) -> int:
         )
         table.add_row("PE export table", pe.export_table_status.replace("_", " "))
         table.add_row("PE exported symbols", str(len(pe.exports)))
+        table.add_row(
+            "PE certificate table",
+            pe.certificate_table.status.replace("_", " "),
+        )
+        table.add_row("PE certificate entries", str(len(pe.certificate_table.entries)))
+        if pe.certificate_table.file_offset is not None:
+            table.add_row(
+                "PE certificate table offset",
+                f"0x{pe.certificate_table.file_offset:08X}",
+            )
+            table.add_row(
+                "PE certificate table size",
+                str(pe.certificate_table.size),
+            )
+        table.add_row("PE overlay", pe.overlay_status.replace("_", " "))
+        if pe.overlay_offset is not None:
+            table.add_row("PE overlay offset", f"0x{pe.overlay_offset:08X}")
+        table.add_row("PE overlay size (bytes)", str(pe.overlay_size))
 
         if pe.sections:
             section_table = Table(title="PE sections (details)")
@@ -165,6 +183,28 @@ def _summary(args: argparse.Namespace) -> int:
                     displayed_symbols.append(f"... +{len(module.symbols) - 10} more")
                 import_table.add_row(module.name, ", ".join(displayed_symbols) or "(none)")
             console.print(import_table)
+
+        if pe.certificate_table.entries:
+            certificate_table = Table(title="PE certificate table entries")
+            certificate_table.add_column("File offset")
+            certificate_table.add_column("Length", justify="right")
+            certificate_table.add_column("Revision")
+            certificate_table.add_column("Type")
+            for entry in pe.certificate_table.entries[:10]:
+                certificate_table.add_row(
+                    f"0x{entry.file_offset:08X}",
+                    str(entry.length),
+                    f"0x{entry.revision:04X}",
+                    entry.certificate_type_name,
+                )
+            if len(pe.certificate_table.entries) > 10:
+                certificate_table.add_row(
+                    "...",
+                    f"+{len(pe.certificate_table.entries) - 10} more",
+                    "",
+                    "",
+                )
+            console.print(certificate_table)
 
         if pe.exports:
             export_table = Table(title="PE exports")

@@ -132,6 +132,11 @@ def _summary(args: argparse.Namespace) -> int:
             pe.certificate_table.status.replace("_", " "),
         )
         table.add_row("PE certificate entries", str(len(pe.certificate_table.entries)))
+        table.add_row(
+            "PE debug directory",
+            pe.debug_directory_status.replace("_", " "),
+        )
+        table.add_row("PE debug entries", str(len(pe.debug_entries)))
         if pe.certificate_table.file_offset is not None:
             table.add_row(
                 "PE certificate table offset",
@@ -183,6 +188,24 @@ def _summary(args: argparse.Namespace) -> int:
                     displayed_symbols.append(f"... +{len(module.symbols) - 10} more")
                 import_table.add_row(module.name, ", ".join(displayed_symbols) or "(none)")
             console.print(import_table)
+
+        codeview_entries = [
+            entry for entry in pe.debug_entries if entry.codeview_format == "RSDS"
+        ]
+        if codeview_entries:
+            debug_table = Table(title="PE CodeView debug metadata")
+            debug_table.add_column("PDB GUID")
+            debug_table.add_column("Age", justify="right")
+            debug_table.add_column("PDB path")
+            for entry in codeview_entries[:10]:
+                debug_table.add_row(
+                    entry.pdb_guid or "",
+                    str(entry.pdb_age if entry.pdb_age is not None else ""),
+                    entry.pdb_path or "",
+                )
+            if len(codeview_entries) > 10:
+                debug_table.add_row("...", "", f"+{len(codeview_entries) - 10} more")
+            console.print(debug_table)
 
         if pe.certificate_table.entries:
             certificate_table = Table(title="PE certificate table entries")

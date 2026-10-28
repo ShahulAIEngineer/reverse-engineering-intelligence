@@ -11,6 +11,7 @@ from re_intel.models import (
     FileAnalysisResult,
     PECertificateEntry,
     PECertificateTable,
+    PEDebugEntry,
     PEExportSymbol,
     PEImportModule,
     PEImportSymbol,
@@ -321,3 +322,58 @@ def test_summary_displays_pe_certificate_table_and_overlay(
     assert "PKCS #7 SignedData" in output
     assert "PE overlay" in output
     assert "present" in output
+
+
+
+def test_summary_displays_pe_debug_directory_and_codeview_path(
+    tmp_path, monkeypatch, capsys
+):
+    """Summary should expose CodeView PDB identity without implying trust."""
+    sample = tmp_path / "debug.exe"
+    sample.write_bytes(b"synthetic PE debug test target")
+    result = FileAnalysisResult(
+        path=str(sample),
+        name=sample.name,
+        extension=".exe",
+        size_bytes=sample.stat().st_size,
+        sha256="d" * 64,
+        signature="Windows PE/DOS executable header (signature hint)",
+        entropy_bits_per_byte=4.0,
+        printable_strings=[],
+        pe_metadata=PEMetadata(
+            machine="x64",
+            section_count=1,
+            is_dll=False,
+            is_executable=True,
+            debug_directory_status="parsed",
+            debug_entries=[
+                PEDebugEntry(
+                    characteristics=0,
+                    timestamp=0x5E2A5A00,
+                    major_version=4,
+                    minor_version=0,
+                    debug_type=2,
+                    debug_type_name="CodeView",
+                    size_of_data=60,
+                    address_of_raw_data=0x1050,
+                    pointer_to_raw_data=0x450,
+                    codeview_format="RSDS",
+                    pdb_guid="00112233-4455-6677-8899-aabbccddeeff",
+                    pdb_age=2,
+                    pdb_path=r"C:\\symbols\\sample.pdb",
+                )
+            ],
+        ),
+    )
+    monkeypatch.setattr("re_intel.cli.analyze_file", lambda *args, **kwargs: result)
+
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(monkeypatch, ["summary", str(sample)])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "PE debug directory" in output
+    assert "PE debug entries" in output
+    assert "PE CodeView debug metadata" in output
+    assert "00112233-4455-6677-8899-aabbccddeeff" in output
+    assert r"C:\\symbols\\sample.pdb" in output

@@ -2,6 +2,7 @@
 import hashlib
 import os
 import struct
+import uuid
 from pathlib import Path
 
 import pytest
@@ -995,3 +996,139 @@ def test_marks_pe_overlay_uncertain_for_truncated_section_raw_data(tmp_path):
     assert result.pe_metadata.overlay_status == "uncertain"
     assert result.pe_metadata.overlay_offset is None
     assert result.pe_metadata.overlay_size == 0
+
+
+
+def create_test_pe_with_codeview_debug(path, *, machine=0x8664):
+    """Create a PE containing one IMAGE_DEBUG_DIRECTORY RSDS entry."""
+    create_test_pe(path, machine=machine, section_count=1)
+    data = bytearray(path.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_offset = pe_offset + 24
+    optional_size = struct.unpack_from("<H", data, pe_offset + 4 + 16)[0]
+    section_offset = optional_offset + optional_size
+
+    raw_offset = 0x400
+    raw_size = 0x400
+    if len(data) < raw_offset + raw_size:
+        data.extend(b"\x00" * (raw_offset + raw_size - len(data)))
+    data[section_offset : section_offset + 8] = b".rdata\x00\x00"
+    struct.pack_into(
+        "<IIII", data, section_offset + 8, raw_size, 0x1000, raw_size, raw_offset
+    )
+    struct.pack_into("<I", data, section_offset + 36, 0x40000040)
+
+    optional_magic = struct.unpack_from("<H", data, optional_offset)[0]
+    is_64bit = optional_magic == 0x020B
+    count_offset = 108 if is_64bit else 92
+    directories_offset = 112 if is_64bit else 96
+    struct.pack_into("<I", data, optional_offset + 60, 0x200)
+    struct.pack_into("<I", data, optional_offset + count_offset, 16)
+
+    pdb_path = b"C:\\symbols\\sample.pdb\x00"
+    pdb_guid_bytes = uuid.UUID("00112233-4455-6677-8899-aabbccddeeff").bytes_le
+    payload = b"RSDS" + pdb_guid_bytes + struct.pack("<I", 2) + pdb_path
+    debug_rva = 0x1000
+    debug_offset = raw_offset
+    payload_rva = 0x1050
+    payload_offset = raw_offset + 0x50
+
+    struct.pack_into(
+        "<II",
+        data,
+        optional_offset + directories_offset + 6 * 8,
+        debug_rva,
+        28,
+    )
+    struct.pack_into(
+        "<IIHHIIII",
+        data,
+        debug_offset,
+        0,
+        0x5E2A5A00,
+        4,
+        0,
+        2,
+        len(payload),
+        payload_rva,
+        payload_offset,
+    )
+    data[payload_offset : payload_offset + len(payload)] = payload
+    path.write_bytes(data)
+
+
+@pytest.mark.parametrize("machine", [0x014C, 0x8664])
+def test_extracts_pe_codeview_debug_directory(tmp_path, machine):
+    sample = tmp_path / "debug.exe"
+    create_test_pe_with_codeview_debug(sample, machine=machine)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    pe = result.pe_metadata
+    assert pe.debug_directory_status == "parsed"
+    assert len(pe.debug_entries) == 1
+    entry = pe.debug_entries[0]
+    assert entry.debug_type == 2
+    assert entry.debug_type_name == "CodeView"
+    assert entry.timestamp == 0x5E2A5A00
+    assert entry.major_version == 4
+    assert entry.codeview_format == "RSDS"
+    assert entry.pdb_guid == "00112233-4455-6677-8899-aabbccddeeff"
+    assert entry.pdb_age == 2
+    assert entry.pdb_path == "C:\\symbols\\sample.pdb"
+
+
+def test_reports_absent_pe_debug_directory(tmp_path):
+    sample = tmp_path / "no_debug.exe"
+    create_test_pe(sample)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.debug_directory_status == "not_present"
+    assert result.pe_metadata.debug_entries == []
+
+
+def test_reports_malformed_pe_debug_directory_rva(tmp_path):
+    sample = tmp_path / "bad_debug_rva.exe"
+    create_test_pe_with_codeview_debug(sample)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_offset = pe_offset + 24
+    directories_offset = 112
+    struct.pack_into(
+        "<II",
+        data,
+        optional_offset + directories_offset + 6 * 8,
+        0x9000,
+        28,
+    )
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.debug_directory_status == "malformed"
+    assert result.pe_metadata.debug_entries == []
+
+
+def test_reports_malformed_rsds_record_without_terminator(tmp_path):
+    sample = tmp_path / "bad_rsds.exe"
+    create_test_pe_with_codeview_debug(sample)
+    data = bytearray(sample.read_bytes())
+    payload_offset = 0x400 + 0x50
+    payload_length = len(
+        b"RSDS"
+        + uuid.UUID("00112233-4455-6677-8899-aabbccddeeff").bytes_le
+        + struct.pack("<I", 2)
+        + b"C:\\symbols\\sample.pdb\x00"
+    )
+    data[payload_offset + payload_length - 1] = ord("X")
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.debug_directory_status == "malformed"
+    assert result.pe_metadata.debug_entries == []

@@ -403,13 +403,16 @@ reverse-engineering-intelligence/
 ├── src/
 │   └── re_intel/
 │       ├── analyzers/
-│       │   └── file_analyzer.py
+│       │   ├── file_analyzer.py
+│       │   └── yara_scanner.py
 │       ├── cli.py
 │       └── models.py
 ├── tests/
 │   ├── test_cli.py
 │   ├── test_file_analyzer.py
-│   └── test_models.py
+│   ├── test_models.py
+│   ├── test_yara_cli.py
+│   └── test_yara_scanner.py
 ├── .env.example
 ├── .gitignore
 ├── pyproject.toml
@@ -461,15 +464,13 @@ Only inspect files you own or have permission to analyze. Treat file contents an
 Potential future milestones:
 
 - [ ] Expand PE validation and optional-header analysis.
-- [ ] Add optional YARA rule integration and rule-result reporting.
 - [ ] Add configurable report schemas and machine-readable analysis summaries.
 - [ ] Add more file-format fixtures and malformed-input tests.
 - [ ] Expand resource-use controls and test additional large-file edge cases.
 - [ ] Add reproducible sample reports and richer usage documentation.
-- [ ] Explore optional YARA integration for rule-based scanning.
 - [ ] Expand CI with supported Python-version coverage and security-focused tests.
 
-These are planned improvements, not features currently claimed as implemented.
+These are planned improvements beyond the current static-analysis and optional YARA-X feature set.
 
 ---
 

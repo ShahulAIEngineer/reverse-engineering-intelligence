@@ -64,7 +64,7 @@ def test_scan_reports_no_match_for_unrelated_content(tmp_path) -> None:
     target.write_bytes(b"ordinary content without the signature")
     _write_rule(rules)
 
-    report = scan_file_with_yara(target, rules)
+    report = _scan_file_with_yara(target, rules)
 
     assert report.matched_rule_count == 0
     assert not report.matching_rules
@@ -77,7 +77,7 @@ def test_scan_rejects_target_above_configured_size_limit(tmp_path) -> None:
     _write_rule(rules)
 
     with pytest.raises(ValueError):
-        scan_file_with_yara(target, rules, max_file_size_mb=1)
+        _scan_file_with_yara(target, rules, max_file_size_mb=1)
 
 
 def test_scan_rejects_invalid_timeout(tmp_path) -> None:
@@ -87,4 +87,4 @@ def test_scan_rejects_invalid_timeout(tmp_path) -> None:
     _write_rule(rules)
 
     with pytest.raises(ValueError):
-        scan_file_with_yara(target, rules, timeout_seconds=0)
+        _scan_file_with_yara(target, rules, timeout_seconds=0)

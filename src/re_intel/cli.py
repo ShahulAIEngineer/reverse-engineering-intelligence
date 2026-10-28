@@ -376,12 +376,12 @@ def _load_comparison_report(
         raise ValueError(f"Could not load JSON report '{report_path}': {exc}") from exc
 
     if not isinstance(document, dict):
-        raise ValueError(f"Report must contain a JSON object: {report_path}")
+        raise TypeError(f"Report must contain a JSON object: {report_path}")
 
     if "results" in document:
         raw_results = document["results"]
         if not isinstance(raw_results, list):
-            raise ValueError(f"Batch report 'results' must be a list: {report_path}")
+            raise TypeError(f"Batch report 'results' must be a list: {report_path}")
     elif "sha256" in document:
         raw_results = [document]
     else:
@@ -393,7 +393,7 @@ def _load_comparison_report(
     results: dict[str, FileAnalysisResult] = {}
     for index, raw_result in enumerate(raw_results):
         if not isinstance(raw_result, dict):
-            raise ValueError(
+            raise TypeError(
                 f"Report '{report_path}' result {index} is not a JSON object"
             )
         try:
@@ -427,7 +427,7 @@ def _compare_reports(args: argparse.Namespace) -> int:
     try:
         before, before_document = _load_comparison_report(before_path)
         after, after_document = _load_comparison_report(after_path)
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         console.print(f"[red]Comparison failed:[/red] {exc}")
         return 2
 

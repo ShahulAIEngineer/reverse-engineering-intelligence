@@ -298,7 +298,7 @@ git diff --check
 
 GitHub Actions runs the configured CI workflow on pushes and pull requests.
 
-**Verification note:** A previous local run passed 47 tests. The file-modification regression test has since failed intermittently on Windows and remains to be resolved before claiming the current working tree is fully verified.
+**Verification:** GitHub Actions passed the test suite and Ruff on the default branch after the file-modification regression test was made deterministic. Re-run the checks locally after future changes.
 
 ---
 

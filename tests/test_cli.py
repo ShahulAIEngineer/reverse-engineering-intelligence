@@ -486,7 +486,9 @@ def test_compare_batch_reports_and_write_json_delta(tmp_path, monkeypatch, capsy
 
     assert exc_info.value.code == 0
     output = capsys.readouterr().out
-    assert "Investigation Report Comparison" in output
+    # Rich may wrap long table titles across multiple lines.
+    assert "Investigation Report" in output
+    assert "Comparison" in output
     assert "Added" in output
     assert "Removed" in output
     assert "Modified" in output

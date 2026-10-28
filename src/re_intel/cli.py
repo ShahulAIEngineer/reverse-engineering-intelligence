@@ -372,7 +372,7 @@ def _load_comparison_report(
     """Load and validate either a single-file or batch JSON analysis report."""
     try:
         document = json.loads(report_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"Could not load JSON report '{report_path}': {exc}") from exc
 
     if not isinstance(document, dict):

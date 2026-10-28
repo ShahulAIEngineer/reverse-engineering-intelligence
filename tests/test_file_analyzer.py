@@ -1,5 +1,6 @@
 
 import hashlib
+import os
 import struct
 from pathlib import Path
 
@@ -415,6 +416,12 @@ def test_analyze_file_rejects_file_modified_during_read(tmp_path, monkeypatch):
                 with original_open(sample, "r+b") as writer:
                     writer.seek(0)
                     writer.write(b"B" * 100)
+                    writer.flush()
+                # Force a timestamp distinct from the initial stat on Windows.
+                os.utime(
+                    sample,
+                    ns=(1_700_000_000_000_000_000, 1_700_000_000_000_000_000),
+                )
 
             return data
 

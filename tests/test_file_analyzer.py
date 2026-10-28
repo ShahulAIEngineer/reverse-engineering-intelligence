@@ -179,6 +179,87 @@ def create_test_pe(
 
 
 def test_extracts_pe_section_metadata(tmp_path):
+
+def create_test_pe_with_imports(path, *, machine=0x8664, symbols=None):
+    """Create a small synthetic PE containing a valid import directory."""
+    if symbols is None:
+        symbols = ["CreateFileW", "CloseHandle"]
+
+    create_test_pe(path, machine=machine, section_count=1)
+    data = bytearray(path.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_header_size = struct.unpack_from("<H", data, pe_offset + 4 + 16)[0]
+    optional_offset = pe_offset + 24
+    section_offset = optional_offset + optional_header_size
+    raw_offset = 0x400
+    raw_size = 0x400
+    if len(data) < raw_offset + raw_size:
+        data.extend(b"\x00" * (raw_offset + raw_size - len(data)))
+
+    data[section_offset : section_offset + 8] = b".rdata\x00\x00"
+    struct.pack_into(
+        "<IIII",
+        data,
+        section_offset + 8,
+        raw_size,
+        0x1000,
+        raw_size,
+        raw_offset,
+    )
+    struct.pack_into("<I", data, section_offset + 36, 0x40000040)
+
+    is_64bit = machine in (0x8664, 0xAA64)
+    directory_count_offset = 108 if is_64bit else 92
+    directory_table_offset = 112 if is_64bit else 96
+    struct.pack_into("<I", data, optional_offset + 60, raw_offset)
+    struct.pack_into("<I", data, optional_offset + directory_count_offset, 16)
+    struct.pack_into(
+        "<II",
+        data,
+        optional_offset + directory_table_offset + 8,
+        0x1000,
+        40,
+    )
+
+    # One import descriptor followed by the required all-zero terminator.
+    struct.pack_into(
+        "<IIIII",
+        data,
+        raw_offset,
+        0x1040,
+        0,
+        0,
+        0x1028,
+        0x1080,
+    )
+    data[raw_offset + 0x28 : raw_offset + 0x28 + 13] = b"KERNEL32.dll\x00"
+
+    ordinal_flag = 1 << ((64 if is_64bit else 32) - 1)
+    thunk_values = []
+    name_cursor = 0x100
+    for symbol in symbols:
+        if isinstance(symbol, int):
+            thunk_values.append(ordinal_flag | symbol)
+            continue
+
+        encoded_name = symbol.encode("ascii") + b"\x00"
+        symbol_rva = 0x1000 + name_cursor
+        struct.pack_into("<H", data, raw_offset + name_cursor, 0)
+        name_start = raw_offset + name_cursor + 2
+        data[name_start : name_start + len(encoded_name)] = encoded_name
+        thunk_values.append(symbol_rva)
+        name_cursor += 2 + len(encoded_name)
+        if name_cursor % 2:
+            name_cursor += 1
+
+    thunk_values.append(0)
+    packed_entries = "<" + ("Q" if is_64bit else "I") * len(thunk_values)
+    struct.pack_into(packed_entries, data, raw_offset + 0x40, *thunk_values)
+    struct.pack_into(packed_entries, data, raw_offset + 0x80, *thunk_values)
+    path.write_bytes(data)
+
+
+def test_extracts_pe_section_metadata(tmp_path):
     sample = tmp_path / "sections.exe"
     create_test_pe(sample, machine=0x8664, section_count=1)
     data = bytearray(sample.read_bytes())
@@ -218,6 +299,66 @@ def test_pe_sections_default_to_empty_for_model_compatibility():
 
 
 def test_extracts_x64_pe_metadata(tmp_path):
+
+@pytest.mark.parametrize("machine", [0x014C, 0x8664])
+def test_extracts_pe_import_table_and_named_symbols(tmp_path, machine):
+    sample = tmp_path / "imports.exe"
+    create_test_pe_with_imports(sample, machine=machine)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.import_table_status == "parsed"
+    assert len(result.pe_metadata.imports) == 1
+    module = result.pe_metadata.imports[0]
+    assert module.name == "KERNEL32.dll"
+    assert [symbol.name for symbol in module.symbols] == ["CreateFileW", "CloseHandle"]
+    assert all(symbol.ordinal is None for symbol in module.symbols)
+
+
+def test_extracts_pe_import_by_ordinal(tmp_path):
+    sample = tmp_path / "ordinal_import.exe"
+    create_test_pe_with_imports(sample, symbols=[7, "CloseHandle"])
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    symbols = result.pe_metadata.imports[0].symbols
+    assert symbols[0].name is None
+    assert symbols[0].ordinal == 7
+    assert symbols[1].name == "CloseHandle"
+
+
+def test_reports_malformed_pe_import_directory(tmp_path):
+    sample = tmp_path / "malformed_imports.exe"
+    create_test_pe_with_imports(sample)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_offset = pe_offset + 24
+    optional_magic = struct.unpack_from("<H", data, optional_offset)[0]
+    directory_offset = 112 if optional_magic == 0x020B else 96
+    struct.pack_into("<I", data, optional_offset + directory_offset + 8, 0x9000)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.import_table_status == "malformed"
+    assert result.pe_metadata.imports == []
+
+
+def test_reports_absent_pe_import_directory(tmp_path):
+    sample = tmp_path / "no_import_directory.exe"
+    create_test_pe(sample)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.import_table_status == "not_present"
+    assert result.pe_metadata.imports == []
+
+
+
     sample = tmp_path / "sample.exe"
     create_test_pe(sample, machine=0x8664, section_count=4)
 

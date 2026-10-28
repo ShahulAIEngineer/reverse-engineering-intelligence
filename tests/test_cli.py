@@ -7,6 +7,12 @@ from pathlib import Path
 import pytest
 
 from re_intel.cli import main
+from re_intel.models import (
+    FileAnalysisResult,
+    PEImportModule,
+    PEImportSymbol,
+    PEMetadata,
+)
 
 
 def invoke_cli(monkeypatch, arguments: list[str]) -> None:
@@ -16,6 +22,52 @@ def invoke_cli(monkeypatch, arguments: list[str]) -> None:
 
 
 def test_batch_generates_json_report(
+
+def test_summary_displays_pe_import_table(tmp_path, monkeypatch, capsys):
+    """Summary output should surface parsed PE import modules and symbols."""
+    sample = tmp_path / "sample.exe"
+    sample.write_bytes(b"synthetic PE test target")
+    result = FileAnalysisResult(
+        path=str(sample),
+        name=sample.name,
+        extension=".exe",
+        size_bytes=sample.stat().st_size,
+        sha256="a" * 64,
+        signature="Windows PE/DOS executable header (signature hint)",
+        entropy_bits_per_byte=4.0,
+        printable_strings=[],
+        pe_metadata=PEMetadata(
+            machine="x64",
+            section_count=1,
+            is_dll=False,
+            is_executable=True,
+            import_table_status="parsed",
+            imports=[
+                PEImportModule(
+                    name="KERNEL32.dll",
+                    symbols=[
+                        PEImportSymbol(name="CreateFileW"),
+                        PEImportSymbol(ordinal=7),
+                    ],
+                )
+            ],
+        ),
+    )
+    monkeypatch.setattr("re_intel.cli.analyze_file", lambda *args, **kwargs: result)
+
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(monkeypatch, ["summary", str(sample)])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "PE import modules" in output
+    assert "PE imported symbols" in output
+    assert "KERNEL32.dll" in output
+    assert "CreateFileW" in output
+    assert "ordinal 7" in output
+
+
+
     tmp_path: Path,
     monkeypatch,
 ) -> None:

@@ -1,7 +1,9 @@
 
 """Validated data models used by the analyzer and CLI."""
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, model_validator
 
 
 class PESection(BaseModel):
@@ -15,6 +17,26 @@ class PESection(BaseModel):
     executable: bool
 
 
+class PEImportSymbol(BaseModel):
+    """A named or ordinal import from a PE image."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=4096)
+    ordinal: int | None = Field(default=None, ge=0, le=0xFFFF)
+
+    @model_validator(mode="after")
+    def validate_symbol_kind(self) -> "PEImportSymbol":
+        if (self.name is None) == (self.ordinal is None):
+            raise ValueError("exactly one of name or ordinal must be provided")
+        return self
+
+
+class PEImportModule(BaseModel):
+    """Imported symbols grouped by their source DLL."""
+
+    name: str = Field(min_length=1, max_length=4096)
+    symbols: list[PEImportSymbol] = Field(default_factory=list)
+
+
 class PEMetadata(BaseModel):
     """Basic metadata parsed from a Windows PE header."""
 
@@ -23,6 +45,8 @@ class PEMetadata(BaseModel):
     is_dll: bool
     is_executable: bool
     sections: list[PESection] = Field(default_factory=list)
+    import_table_status: Literal["not_present", "parsed", "malformed"] = "not_present"
+    imports: list[PEImportModule] = Field(default_factory=list)
 
 
 class FileAnalysisResult(BaseModel):

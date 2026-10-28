@@ -103,6 +103,19 @@ def _summary(args: argparse.Namespace) -> int:
     if result.pe_metadata is not None:
         pe = result.pe_metadata
         table.add_row("PE architecture", pe.machine)
+        if pe.optional_header is not None:
+            optional = pe.optional_header
+            table.add_row("PE optional header", optional.format)
+            table.add_row("PE entry point RVA", f"0x{optional.entry_point_rva:08X}")
+            table.add_row("PE image base", f"0x{optional.image_base:X}")
+            table.add_row("PE subsystem", optional.subsystem_name)
+            table.add_row("PE section alignment", str(optional.section_alignment))
+            table.add_row("PE file alignment", str(optional.file_alignment))
+            table.add_row("PE image size", str(optional.size_of_image))
+            table.add_row("PE headers size", str(optional.size_of_headers))
+            table.add_row(
+                "PE DLL characteristics", f"0x{optional.dll_characteristics:04X}"
+            )
         table.add_row("PE sections", str(pe.section_count))
         table.add_row("Executable", "Yes" if pe.is_executable else "No")
         table.add_row("DLL", "Yes" if pe.is_dll else "No")

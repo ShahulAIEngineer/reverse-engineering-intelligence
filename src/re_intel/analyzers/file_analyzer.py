@@ -13,6 +13,7 @@ from re_intel.models import (
     PEImportModule,
     PEImportSymbol,
     PEMetadata,
+    PEOptionalHeader,
     PESection,
 )
 
@@ -24,6 +25,22 @@ MAX_PE_IMPORT_MODULES = 512
 MAX_PE_IMPORT_SYMBOLS = 10_000
 MAX_PE_EXPORTS = 20_000
 MAX_PE_STRING_LENGTH = 4096
+
+PE_SUBSYSTEMS = {
+    0: "Unknown",
+    1: "Native",
+    2: "Windows GUI",
+    3: "Windows CUI",
+    5: "OS/2 CUI",
+    7: "POSIX CUI",
+    9: "Windows CE GUI",
+    10: "EFI application",
+    11: "EFI boot service driver",
+    12: "EFI runtime driver",
+    13: "EFI ROM",
+    14: "Xbox",
+    16: "Windows boot application",
+}
 
 SIGNATURES = (
     (b"MZ", "Windows PE/DOS executable header (signature hint)"),
@@ -64,6 +81,47 @@ def _entropy(counts: Counter[int], total: int) -> float:
         entropy -= probability * math.log2(probability)
 
     return entropy
+
+
+
+
+def _extract_pe_optional_header(optional_header: bytes, optional_magic: int) -> PEOptionalHeader | None:
+    """Extract selected PE32/PE32+ optional-header fields from validated bytes."""
+    if len(optional_header) < 72 or optional_magic not in (0x010B, 0x020B):
+        return None
+
+    try:
+        image_base = (
+            struct.unpack_from("<I", optional_header, 28)[0]
+            if optional_magic == 0x010B
+            else struct.unpack_from("<Q", optional_header, 24)[0]
+        )
+        entry_point_rva = struct.unpack_from("<I", optional_header, 16)[0]
+        section_alignment, file_alignment = struct.unpack_from(
+            "<II", optional_header, 32
+        )
+        size_of_image, size_of_headers = struct.unpack_from(
+            "<II", optional_header, 56
+        )
+        subsystem, dll_characteristics = struct.unpack_from(
+            "<HH", optional_header, 68
+        )
+        return PEOptionalHeader(
+            format="PE32" if optional_magic == 0x010B else "PE32+",
+            entry_point_rva=entry_point_rva,
+            image_base=image_base,
+            section_alignment=section_alignment,
+            file_alignment=file_alignment,
+            size_of_image=size_of_image,
+            size_of_headers=size_of_headers,
+            subsystem=subsystem,
+            subsystem_name=PE_SUBSYSTEMS.get(
+                subsystem, f"Unknown ({subsystem})"
+            ),
+            dll_characteristics=dll_characteristics,
+        )
+    except (struct.error, ValueError):
+        return None
 
 
 def _rva_to_file_span(
@@ -591,7 +649,12 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                     )
                 )
 
-            size_of_headers = struct.unpack_from("<I", optional_header, 60)[0]
+            optional_header_metadata = _extract_pe_optional_header(
+                optional_header, optional_magic
+            )
+            if optional_header_metadata is None:
+                return None
+            size_of_headers = optional_header_metadata.size_of_headers
             imports, import_table_status = _extract_pe_imports(
                 file_handle,
                 optional_header=optional_header,
@@ -619,6 +682,7 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                 imports=imports,
                 export_table_status=export_table_status,
                 exports=exports,
+                optional_header=optional_header_metadata,
             )
 
     except (OSError, struct.error, ValueError):

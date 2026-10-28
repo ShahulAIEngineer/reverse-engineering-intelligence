@@ -13,6 +13,7 @@ from re_intel.models import (
     PEImportModule,
     PEImportSymbol,
     PEMetadata,
+    PEOptionalHeader,
 )
 
 
@@ -41,6 +42,18 @@ def test_summary_displays_pe_export_table(tmp_path, monkeypatch, capsys):
             machine="x64",
             section_count=1,
             is_dll=True,
+            optional_header=PEOptionalHeader(
+                format="PE32+",
+                entry_point_rva=0x1234,
+                image_base=0x140000000,
+                section_alignment=0x1000,
+                file_alignment=0x200,
+                size_of_image=0x3000,
+                size_of_headers=0x400,
+                subsystem=2,
+                subsystem_name="Windows GUI",
+                dll_characteristics=0x8160,
+            ),
             is_executable=False,
             export_table_status="parsed",
             exports=[
@@ -65,6 +78,10 @@ def test_summary_displays_pe_export_table(tmp_path, monkeypatch, capsys):
     assert "PE exported symbols" in output
     assert "DemoExport" in output
     assert "KERNEL32.Sleep" in output
+    assert "PE optional header" in output
+    assert "PE32+" in output
+    assert "0x140000000" in output
+    assert "Windows GUI" in output
 
 
 def test_summary_displays_pe_import_table(tmp_path, monkeypatch, capsys):

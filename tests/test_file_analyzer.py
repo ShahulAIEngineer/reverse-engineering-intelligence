@@ -474,6 +474,61 @@ def test_reports_absent_pe_export_directory(tmp_path):
     assert result.pe_metadata.exports == []
 
 
+
+
+@pytest.mark.parametrize(
+    ("machine", "expected_format", "image_base"),
+    [
+        (0x014C, "PE32", 0x00400000),
+        (0x8664, "PE32+", 0x0000000140000000),
+    ],
+)
+def test_extracts_pe_optional_header_metadata(tmp_path, machine, expected_format, image_base):
+    sample = tmp_path / "optional_header.exe"
+    create_test_pe(sample, machine=machine, section_count=1)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_offset = pe_offset + 24
+    optional_magic = struct.unpack_from("<H", data, optional_offset)[0]
+    image_base_offset = 28 if optional_magic == 0x010B else 24
+    image_base_format = "<I" if optional_magic == 0x010B else "<Q"
+
+    struct.pack_into("<I", data, optional_offset + 16, 0x1234)
+    struct.pack_into(image_base_format, data, optional_offset + image_base_offset, image_base)
+    struct.pack_into("<II", data, optional_offset + 32, 0x1000, 0x200)
+    struct.pack_into("<II", data, optional_offset + 56, 0x3000, 0x200)
+    struct.pack_into("<HH", data, optional_offset + 68, 3, 0x8160)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    optional = result.pe_metadata.optional_header
+    assert optional is not None
+    assert optional.format == expected_format
+    assert optional.entry_point_rva == 0x1234
+    assert optional.image_base == image_base
+    assert optional.section_alignment == 0x1000
+    assert optional.file_alignment == 0x200
+    assert optional.size_of_image == 0x3000
+    assert optional.size_of_headers == 0x200
+    assert optional.subsystem == 3
+    assert optional.subsystem_name == "Windows CUI"
+    assert optional.dll_characteristics == 0x8160
+
+
+def test_pe_optional_header_model_is_optional_for_legacy_results():
+    from re_intel.models import PEMetadata
+
+    metadata = PEMetadata(
+        machine="x64",
+        section_count=0,
+        is_dll=False,
+        is_executable=True,
+    )
+    assert metadata.optional_header is None
+
+
 def test_extracts_x64_pe_metadata(tmp_path):
     sample = tmp_path / "sample.exe"
     create_test_pe(sample, machine=0x8664, section_count=4)

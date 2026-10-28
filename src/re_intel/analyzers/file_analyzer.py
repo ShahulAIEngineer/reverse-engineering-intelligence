@@ -155,8 +155,16 @@ def analyze_file(
     if not path.is_file():
         raise ValueError(f"Not a regular file: {path}")
 
+    initial_stat = path.stat()
+    initial_size = initial_stat.st_size
+    initial_identity = (
+        initial_stat.st_dev,
+        initial_stat.st_ino,
+        initial_stat.st_size,
+        initial_stat.st_mtime_ns,
+        initial_stat.st_ctime_ns,
+    )
     max_file_size_bytes = max_file_size_mb * BYTES_PER_MIB
-    initial_size = path.stat().st_size
 
     if initial_size > max_file_size_bytes:
         raise ValueError(
@@ -200,6 +208,18 @@ def analyze_file(
 
     if len(current_string) >= min_string_length and len(strings) < max_strings:
         strings.append(current_string.decode("ascii"))
+
+    final_stat = path.stat()
+    final_identity = (
+        final_stat.st_dev,
+        final_stat.st_ino,
+        final_stat.st_size,
+        final_stat.st_mtime_ns,
+        final_stat.st_ctime_ns,
+    )
+
+    if final_identity != initial_identity:
+        raise ValueError(f"File changed during analysis: {path}")
 
     return FileAnalysisResult(
         path=str(path.resolve()),

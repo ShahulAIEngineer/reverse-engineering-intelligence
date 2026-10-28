@@ -335,3 +335,58 @@ def test_rejects_pe_with_zero_sections(tmp_path):
     result = analyze_file(sample)
 
     assert result.pe_metadata is None
+
+def test_rejects_pe_offset_beyond_file(tmp_path):
+    sample = tmp_path / "pe_offset_beyond_file.exe"
+    data = bytearray(128)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 0x1000)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+def test_analyze_file_rejects_file_modified_during_read(tmp_path, monkeypatch):
+    """Reject a file modified during analysis without exceeding the size limit."""
+    sample = tmp_path / "modified.bin"
+    sample.write_bytes(b"A" * 100)
+
+    original_open = Path.open
+    modified = False
+
+    class ModifyingReader:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            self.handle.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+        def read(self, size=-1):
+            nonlocal modified
+            data = self.handle.read(size)
+
+            if size == 1024 * 1024 and data and not modified:
+                modified = True
+                with original_open(sample, "r+b") as writer:
+                    writer.seek(0)
+                    writer.write(b"B" * 100)
+
+            return data
+
+    def open_with_modification(path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+
+        if path == sample and args and args[0] == "rb":
+            return ModifyingReader(handle)
+
+        return handle
+
+    monkeypatch.setattr(Path, "open", open_with_modification)
+
+    with pytest.raises(ValueError, match="File changed during analysis"):
+        analyze_file(sample)

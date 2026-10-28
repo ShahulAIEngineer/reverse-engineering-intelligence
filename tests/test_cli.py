@@ -9,9 +9,9 @@ import pytest
 from re_intel.cli import main
 from re_intel.models import (
     FileAnalysisResult,
-    PEExportSymbol,
     PECertificateEntry,
     PECertificateTable,
+    PEExportSymbol,
     PEImportModule,
     PEImportSymbol,
     PEMetadata,

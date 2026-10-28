@@ -9,9 +9,9 @@ from typing import Literal
 
 from re_intel.models import (
     FileAnalysisResult,
-    PEExportSymbol,
     PECertificateEntry,
     PECertificateTable,
+    PEExportSymbol,
     PEImportModule,
     PEImportSymbol,
     PEMetadata,

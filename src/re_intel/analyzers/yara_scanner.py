@@ -69,10 +69,7 @@ class YaraScanReport(BaseModel):
 
 def _read_bounded(path: Path, limit: int, description: str) -> bytes:
     """Read no more than limit+1 bytes, detecting growth after an initial stat."""
-    try:
-        size = path.stat().st_size
-    except OSError:
-        raise
+    size = path.stat().st_size
 
     if size > limit:
         raise ValueError(f"{description} exceeds the configured size limit ({limit} bytes).")

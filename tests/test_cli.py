@@ -17,6 +17,7 @@ from re_intel.models import (
     PEImportSymbol,
     PEMetadata,
     PEOptionalHeader,
+    PEResourceEntry,
 )
 
 
@@ -377,3 +378,47 @@ def test_summary_displays_pe_debug_directory_and_codeview_path(
     assert "PE CodeView debug metadata" in output
     assert "00112233-4455-6677-8899-aabbccddeeff" in output
     assert r"C:\\symbols\\sample.pdb" in output
+
+
+
+def test_summary_displays_pe_resource_directory(tmp_path, monkeypatch, capsys):
+    """Summary should list resource paths and their declared data metadata."""
+    sample = tmp_path / "resources.exe"
+    sample.write_bytes(b"synthetic PE resource test target")
+    result = FileAnalysisResult(
+        path=str(sample),
+        name=sample.name,
+        extension=".exe",
+        size_bytes=sample.stat().st_size,
+        sha256="e" * 64,
+        signature="Windows PE/DOS executable header (signature hint)",
+        entropy_bits_per_byte=4.0,
+        printable_strings=[],
+        pe_metadata=PEMetadata(
+            machine="x64",
+            section_count=1,
+            is_dll=False,
+            is_executable=True,
+            resource_directory_status="parsed",
+            resources=[
+                PEResourceEntry(
+                    path=["RT_MANIFEST", "ID:1", "LANG:1033"],
+                    data_rva=0x1100,
+                    size=16,
+                    code_page=1200,
+                    file_offset=0x500,
+                )
+            ],
+        ),
+    )
+    monkeypatch.setattr("re_intel.cli.analyze_file", lambda *args, **kwargs: result)
+
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(monkeypatch, ["summary", str(sample)])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "PE resource directory" in output
+    assert "PE resource entries" in output
+    assert "RT_MANIFEST / ID:1 / LANG:1033" in output
+    assert "0x00001100" in output

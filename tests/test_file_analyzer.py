@@ -1132,3 +1132,120 @@ def test_reports_malformed_rsds_record_without_terminator(tmp_path):
     assert result.pe_metadata is not None
     assert result.pe_metadata.debug_directory_status == "malformed"
     assert result.pe_metadata.debug_entries == []
+
+
+
+def create_test_pe_with_resources(path, *, machine=0x8664):
+    """Create a minimal nested PE resource tree with one manifest-like leaf."""
+    create_test_pe(path, machine=machine, section_count=1)
+    data = bytearray(path.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_offset = pe_offset + 24
+    optional_size = struct.unpack_from("<H", data, pe_offset + 4 + 16)[0]
+    section_offset = optional_offset + optional_size
+    raw_offset = 0x400
+    raw_size = 0x400
+    if len(data) < raw_offset + raw_size:
+        data.extend(b"\x00" * (raw_offset + raw_size - len(data)))
+
+    data[section_offset : section_offset + 8] = b".rsrc\x00\x00\x00"
+    struct.pack_into(
+        "<IIII", data, section_offset + 8, raw_size, 0x1000, raw_size, raw_offset
+    )
+    struct.pack_into("<I", data, section_offset + 36, 0x40000040)
+
+    optional_magic = struct.unpack_from("<H", data, optional_offset)[0]
+    is_64bit = optional_magic == 0x020B
+    count_offset = 108 if is_64bit else 92
+    directories_offset = 112 if is_64bit else 96
+    struct.pack_into("<I", data, optional_offset + 60, 0x200)
+    struct.pack_into("<I", data, optional_offset + count_offset, 16)
+    struct.pack_into(
+        "<II", data, optional_offset + directories_offset + 2 * 8, 0x1000, 0x100
+    )
+
+    # Root -> RT_MANIFEST (24) -> resource ID 1 -> language ID 1033 -> data entry.
+    struct.pack_into("<IIHHHH", data, raw_offset, 0, 0, 0, 0, 0, 1)
+    struct.pack_into("<II", data, raw_offset + 16, 24, 0x80000018)
+    struct.pack_into("<IIHHHH", data, raw_offset + 24, 0, 0, 0, 0, 0, 1)
+    struct.pack_into("<II", data, raw_offset + 40, 1, 0x80000038)
+    struct.pack_into("<IIHHHH", data, raw_offset + 56, 0, 0, 0, 0, 0, 1)
+    struct.pack_into("<II", data, raw_offset + 72, 1033, 88)
+    struct.pack_into("<IIII", data, raw_offset + 88, 0x1100, 16, 1200, 0)
+    data[raw_offset + 0x100 : raw_offset + 0x110] = b"RESOURCE_PAYLOAD"
+    path.write_bytes(data)
+
+
+@pytest.mark.parametrize("machine", [0x014C, 0x8664])
+def test_extracts_pe_resource_directory_tree(tmp_path, machine):
+    sample = tmp_path / "resources.exe"
+    create_test_pe_with_resources(sample, machine=machine)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    pe = result.pe_metadata
+    assert pe.resource_directory_status == "parsed"
+    assert len(pe.resources) == 1
+    resource = pe.resources[0]
+    assert resource.path == ["RT_MANIFEST", "ID:1", "LANG:1033"]
+    assert resource.data_rva == 0x1100
+    assert resource.size == 16
+    assert resource.code_page == 1200
+    assert resource.file_offset == 0x500
+
+
+def test_reports_absent_pe_resource_directory(tmp_path):
+    sample = tmp_path / "no_resources.exe"
+    create_test_pe(sample)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.resource_directory_status == "not_present"
+    assert result.pe_metadata.resources == []
+
+
+def test_reports_malformed_pe_resource_directory_rva(tmp_path):
+    sample = tmp_path / "bad_resource_directory.exe"
+    create_test_pe_with_resources(sample)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_offset = pe_offset + 24
+    struct.pack_into("<II", data, optional_offset + 112 + 2 * 8, 0x9000, 0x100)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.resource_directory_status == "malformed"
+    assert result.pe_metadata.resources == []
+
+
+def test_rejects_cyclic_pe_resource_tree(tmp_path):
+    sample = tmp_path / "cyclic_resources.exe"
+    create_test_pe_with_resources(sample)
+    data = bytearray(sample.read_bytes())
+    # Make the first resource entry point back to the root directory.
+    struct.pack_into("<I", data, 0x400 + 16 + 4, 0x80000000)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.resource_directory_status == "malformed"
+    assert result.pe_metadata.resources == []
+
+
+def test_rejects_pe_resource_leaf_with_unmapped_data_rva(tmp_path):
+    sample = tmp_path / "bad_resource_data.exe"
+    create_test_pe_with_resources(sample)
+    data = bytearray(sample.read_bytes())
+    struct.pack_into("<I", data, 0x400 + 88, 0x9000)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.resource_directory_status == "malformed"
+    assert result.pe_metadata.resources == []

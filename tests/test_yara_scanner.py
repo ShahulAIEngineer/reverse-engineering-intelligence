@@ -9,6 +9,7 @@ import hashlib
 import importlib.util
 
 import pytest
+
 from re_intel.analyzers.yara_scanner import scan_file_with_yara
 
 

@@ -4,7 +4,7 @@
 
 **Inspect. Fingerprint. Investigate. Understand.**
 
-A Python-powered, read-only static file analysis toolkit built to help security learners and developers inspect files, identify basic file signatures, extract printable strings, estimate entropy, and examine Windows PE headers and sections — without intentionally executing or modifying the files being inspected.
+A Python-powered, read-only static file analysis toolkit built to help security learners and developers inspect files, identify basic file signatures, extract printable strings, estimate entropy, and examine Windows PE headers, sections, and import tables — without intentionally executing or modifying the files being inspected.
 
 [![Python CI](https://github.com/ShahulAIEngineer/reverse-engineering-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/ShahulAIEngineer/reverse-engineering-intelligence/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
@@ -74,7 +74,7 @@ flowchart TD
 | 03 · Identify | Check known byte signatures | A heuristic format hint |
 | 04 · Extract | Find printable ASCII sequences | Potentially useful strings |
 | 05 · Measure | Calculate Shannon entropy | A rough byte-distribution indicator |
-| 06 · Examine | Inspect PE headers and sections | Architecture, section count, executable/DLL flags, and per-section metadata |
+| 06 · Examine | Inspect PE headers, sections, and imports | Architecture, section metadata, imported DLLs, and imported names or ordinals |
 | 07 · Report | Validate and serialize results | Terminal output or JSON |
 
 ---
@@ -101,7 +101,7 @@ Calculates Shannon entropy in bits per byte, from 0 to 8, as one signal for furt
 
 ### 🪟 Windows PE inspection
 
-Reads selected PE/COFF header fields, including machine architecture, section count, executable characteristics, and DLL status.
+Reads selected PE/COFF header fields, section permissions, and the import table, including DLL names and imports by name or ordinal. Malformed import tables are reported explicitly instead of being silently treated as valid.
 
 Available per-section metadata includes:
 
@@ -202,6 +202,16 @@ A simplified illustrative report:
     "section_count": 3,
     "is_dll": false,
     "is_executable": true,
+    "import_table_status": "parsed",
+    "imports": [
+      {
+        "name": "KERNEL32.dll",
+        "symbols": [
+          {"name": "CreateFileW"},
+          {"ordinal": 7}
+        ]
+      }
+    ],
     "sections": [
       {
         "name": ".text",
@@ -378,7 +388,7 @@ Only inspect files you own or have permission to analyze. Treat file contents an
 Potential future milestones:
 
 - [ ] Expand PE validation and optional-header analysis.
-- [ ] Add import-table analysis.
+- [ ] Add PE export-table analysis.
 - [ ] Add configurable report schemas and machine-readable analysis summaries.
 - [ ] Add more file-format fixtures and malformed-input tests.
 - [ ] Expand resource-use controls and test additional large-file edge cases.

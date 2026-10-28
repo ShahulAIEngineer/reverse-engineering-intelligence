@@ -5,13 +5,23 @@ import math
 import struct
 from collections import Counter
 from pathlib import Path
+from typing import Literal
 
-from re_intel.models import FileAnalysisResult, PEMetadata, PESection
+from re_intel.models import (
+    FileAnalysisResult,
+    PEImportModule,
+    PEImportSymbol,
+    PEMetadata,
+    PESection,
+)
 
 CHUNK_SIZE = 1024 * 1024
 PE_OFFSET_LOCATION = 0x3C
 DEFAULT_MAX_FILE_SIZE_MB = 100
 BYTES_PER_MIB = 1024 * 1024
+MAX_PE_IMPORT_MODULES = 512
+MAX_PE_IMPORT_SYMBOLS = 10_000
+MAX_PE_IMPORT_STRING_LENGTH = 4096
 
 SIGNATURES = (
     (b"MZ", "Windows PE/DOS executable header (signature hint)"),
@@ -52,6 +62,236 @@ def _entropy(counts: Counter[int], total: int) -> float:
         entropy -= probability * math.log2(probability)
 
     return entropy
+
+
+def _rva_to_file_span(
+    rva: int,
+    *,
+    sections: list[PESection],
+    file_size: int,
+    size_of_headers: int,
+) -> tuple[int, int] | None:
+    """Map a PE relative virtual address to a bounded file span."""
+    if rva < 0:
+        return None
+
+    header_limit = min(size_of_headers, file_size)
+    if rva < header_limit:
+        return rva, header_limit - rva
+
+    for section in sections:
+        delta = rva - section.virtual_address
+        mapped_size = max(section.virtual_size, section.raw_size)
+        if delta < 0 or delta >= mapped_size:
+            continue
+        if delta >= section.raw_size:
+            return None
+
+        file_offset = section.raw_offset + delta
+        if not 0 <= file_offset < file_size:
+            return None
+
+        available = min(section.raw_size - delta, file_size - file_offset)
+        if available > 0:
+            return file_offset, available
+        return None
+
+    return None
+
+
+def _read_ascii_string_at_rva(
+    file_handle,
+    rva: int,
+    *,
+    sections: list[PESection],
+    file_size: int,
+    size_of_headers: int,
+) -> str | None:
+    """Read a bounded, null-terminated ASCII string from an RVA."""
+    span = _rva_to_file_span(
+        rva,
+        sections=sections,
+        file_size=file_size,
+        size_of_headers=size_of_headers,
+    )
+    if span is None:
+        return None
+
+    file_offset, available = span
+    read_limit = min(available, MAX_PE_IMPORT_STRING_LENGTH + 1)
+    file_handle.seek(file_offset)
+    data = file_handle.read(read_limit)
+    terminator = data.find(b"\x00")
+    if terminator <= 0:
+        return None
+
+    return data[:terminator].decode("ascii", errors="replace")
+
+
+def _read_pe_import_symbols(
+    file_handle,
+    thunk_rva: int,
+    *,
+    is_64bit: bool,
+    sections: list[PESection],
+    file_size: int,
+    size_of_headers: int,
+    max_symbols: int,
+) -> list[PEImportSymbol] | None:
+    """Read import-by-name and import-by-ordinal entries from a thunk table."""
+    if thunk_rva == 0:
+        return None
+
+    entry_size = 8 if is_64bit else 4
+    ordinal_flag = 1 << ((entry_size * 8) - 1)
+    integer_format = "<Q" if is_64bit else "<I"
+    symbols: list[PEImportSymbol] = []
+
+    for index in range(max_symbols + 1):
+        entry_rva = thunk_rva + index * entry_size
+        span = _rva_to_file_span(
+            entry_rva,
+            sections=sections,
+            file_size=file_size,
+            size_of_headers=size_of_headers,
+        )
+        if span is None or span[1] < entry_size:
+            return None
+
+        file_handle.seek(span[0])
+        entry_data = file_handle.read(entry_size)
+        if len(entry_data) != entry_size:
+            return None
+        value = struct.unpack(integer_format, entry_data)[0]
+
+        if value == 0:
+            return symbols
+        if len(symbols) >= max_symbols:
+            return None
+
+        if value & ordinal_flag:
+            symbols.append(PEImportSymbol(ordinal=value & 0xFFFF))
+            continue
+
+        # Import-by-name entries contain a 32-bit RVA even in PE32+ images.
+        if value > 0xFFFFFFFF:
+            return None
+        hint_span = _rva_to_file_span(
+            value,
+            sections=sections,
+            file_size=file_size,
+            size_of_headers=size_of_headers,
+        )
+        if hint_span is None or hint_span[1] < 2:
+            return None
+
+        symbol_name = _read_ascii_string_at_rva(
+            file_handle,
+            value + 2,
+            sections=sections,
+            file_size=file_size,
+            size_of_headers=size_of_headers,
+        )
+        if symbol_name is None:
+            return None
+        symbols.append(PEImportSymbol(name=symbol_name))
+
+    return None
+
+
+def _extract_pe_imports(
+    file_handle,
+    *,
+    optional_header: bytes,
+    optional_magic: int,
+    sections: list[PESection],
+    file_size: int,
+    size_of_headers: int,
+) -> tuple[list[PEImportModule], Literal["not_present", "parsed", "malformed"]]:
+    """Parse a bounded PE import directory and report malformed tables explicitly."""
+    count_offset = 92 if optional_magic == 0x010B else 108
+    directories_offset = 96 if optional_magic == 0x010B else 112
+
+    if len(optional_header) < count_offset + 4:
+        return [], "malformed"
+
+    directory_count = struct.unpack_from("<I", optional_header, count_offset)[0]
+    if directory_count <= 1:
+        return [], "not_present"
+    if len(optional_header) < directories_offset + 16:
+        return [], "malformed"
+
+    import_rva, import_size = struct.unpack_from(
+        "<II", optional_header, directories_offset + 8
+    )
+    if import_rva == 0 and import_size == 0:
+        return [], "not_present"
+    if import_rva == 0 or import_size < 40:
+        return [], "malformed"
+
+    descriptor_limit = min(import_size // 20, MAX_PE_IMPORT_MODULES + 1)
+    imports: list[PEImportModule] = []
+    total_symbols = 0
+    is_64bit = optional_magic == 0x020B
+
+    for index in range(descriptor_limit):
+        descriptor_rva = import_rva + index * 20
+        span = _rva_to_file_span(
+            descriptor_rva,
+            sections=sections,
+            file_size=file_size,
+            size_of_headers=size_of_headers,
+        )
+        if span is None or span[1] < 20:
+            return [], "malformed"
+
+        file_handle.seek(span[0])
+        descriptor_data = file_handle.read(20)
+        if len(descriptor_data) != 20:
+            return [], "malformed"
+        original_thunk, _, _, name_rva, first_thunk = struct.unpack(
+            "<IIIII", descriptor_data
+        )
+
+        if not any((original_thunk, name_rva, first_thunk)):
+            # A terminating descriptor must have all five fields set to zero.
+            if any(descriptor_data):
+                return [], "malformed"
+            return imports, "parsed"
+
+        if len(imports) >= MAX_PE_IMPORT_MODULES or name_rva == 0:
+            return [], "malformed"
+
+        module_name = _read_ascii_string_at_rva(
+            file_handle,
+            name_rva,
+            sections=sections,
+            file_size=file_size,
+            size_of_headers=size_of_headers,
+        )
+        if module_name is None:
+            return [], "malformed"
+
+        lookup_rva = original_thunk or first_thunk
+        if lookup_rva == 0:
+            return [], "malformed"
+
+        symbols = _read_pe_import_symbols(
+            file_handle,
+            lookup_rva,
+            is_64bit=is_64bit,
+            sections=sections,
+            file_size=file_size,
+            size_of_headers=size_of_headers,
+            max_symbols=MAX_PE_IMPORT_SYMBOLS - total_symbols,
+        )
+        if symbols is None:
+            return [], "malformed"
+
+        total_symbols += len(symbols)
+        imports.append(PEImportModule(name=module_name, symbols=symbols))
+
+    return [], "malformed"
 
 
 def _extract_pe_metadata(path: Path) -> PEMetadata | None:
@@ -164,12 +404,24 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                     )
                 )
 
+            size_of_headers = struct.unpack_from("<I", optional_header, 60)[0]
+            imports, import_table_status = _extract_pe_imports(
+                file_handle,
+                optional_header=optional_header,
+                optional_magic=optional_magic,
+                sections=sections,
+                file_size=file_size,
+                size_of_headers=size_of_headers,
+            )
+
             return PEMetadata(
                 machine=PE_MACHINES.get(machine, f"Unknown (0x{machine:04X})"),
                 section_count=section_count,
                 is_dll=bool(characteristics & 0x2000),
                 is_executable=bool(characteristics & 0x0002),
                 sections=sections,
+                import_table_status=import_table_status,
+                imports=imports,
             )
 
     except (OSError, struct.error, ValueError):

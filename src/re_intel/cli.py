@@ -106,6 +106,12 @@ def _summary(args: argparse.Namespace) -> int:
         table.add_row("PE sections", str(pe.section_count))
         table.add_row("Executable", "Yes" if pe.is_executable else "No")
         table.add_row("DLL", "Yes" if pe.is_dll else "No")
+        table.add_row("PE import table", pe.import_table_status.replace("_", " "))
+        table.add_row("PE import modules", str(len(pe.imports)))
+        table.add_row(
+            "PE imported symbols",
+            str(sum(len(module.symbols) for module in pe.imports)),
+        )
 
         if pe.sections:
             section_table = Table(title="PE sections (details)")
@@ -130,6 +136,20 @@ def _summary(args: argparse.Namespace) -> int:
                     permissions,
                 )
             console.print(section_table)
+
+        if pe.imports:
+            import_table = Table(title="PE imports")
+            import_table.add_column("Library")
+            import_table.add_column("Imported symbols")
+            for module in pe.imports:
+                displayed_symbols = [
+                    symbol.name if symbol.name is not None else f"ordinal {symbol.ordinal}"
+                    for symbol in module.symbols[:10]
+                ]
+                if len(module.symbols) > 10:
+                    displayed_symbols.append(f"... +{len(module.symbols) - 10} more")
+                import_table.add_row(module.name, ", ".join(displayed_symbols) or "(none)")
+            console.print(import_table)
     else:
         table.add_row("PE metadata", "Not detected")
 

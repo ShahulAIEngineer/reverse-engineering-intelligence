@@ -1,13 +1,10 @@
-
-<div align="center">
-
 # 🔎 Reverse Engineering Intelligence
 
 ### Turn unknown files into structured intelligence.
 
 **Inspect. Fingerprint. Investigate. Understand.**
 
-A Python-powered, read-only static file analysis toolkit built to help security learners and developers inspect files, identify basic file signatures, extract printable strings, estimate entropy, and examine Windows PE headers — without executing or modifying the files being inspected.
+A Python-powered, read-only static file analysis toolkit built to help security learners and developers inspect files, identify basic file signatures, extract printable strings, estimate entropy, and examine Windows PE headers and sections — without intentionally executing or modifying the files being inspected.
 
 [![Python CI](https://github.com/ShahulAIEngineer/reverse-engineering-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/ShahulAIEngineer/reverse-engineering-intelligence/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
@@ -15,8 +12,6 @@ A Python-powered, read-only static file analysis toolkit built to help security 
 ![License](https://img.shields.io/badge/License-See%20Repository-lightgrey)
 
 [Explore the Repository](https://github.com/ShahulAIEngineer/reverse-engineering-intelligence) · [View CI Results](https://github.com/ShahulAIEngineer/reverse-engineering-intelligence/actions)
-
-</div>
 
 ---
 
@@ -28,7 +23,7 @@ Its name tells you almost nothing. Its extension might be misleading. You don't 
 
 **Where do you begin?**
 
-Reverse Engineering Intelligence approaches the problem as a structured investigation. It reads the file, calculates a cryptographic fingerprint, looks for recognizable signatures, extracts printable ASCII strings, measures byte-level entropy, and checks for basic Windows PE header metadata.
+Reverse Engineering Intelligence approaches the problem as a structured investigation. It reads the file, calculates a cryptographic fingerprint, looks for recognizable signatures, extracts printable ASCII strings, measures byte-level entropy, and checks selected Windows PE header and section metadata.
 
 The result is a structured report you can inspect in your terminal or save as JSON.
 
@@ -46,7 +41,7 @@ flowchart TD
     C --> E["Identify signature hints"]
     C --> F["Extract printable ASCII strings"]
     C --> G["Calculate Shannon entropy"]
-    C --> H["Inspect Windows PE header"]
+    C --> H["Inspect PE headers and sections"]
     D --> I["Build validated result"]
     E --> I
     F --> I
@@ -79,79 +74,59 @@ flowchart TD
 | 03 · Identify | Check known byte signatures | A heuristic format hint |
 | 04 · Extract | Find printable ASCII sequences | Potentially useful strings |
 | 05 · Measure | Calculate Shannon entropy | A rough byte-distribution indicator |
-| 06 · Examine | Inspect basic PE headers | Architecture, section count, executable and DLL flags |
+| 06 · Examine | Inspect PE headers and sections | Architecture, section count, executable/DLL flags, and per-section metadata |
 | 07 · Report | Validate and serialize results | Terminal output or JSON |
 
 ---
 
 ## ⚡ Features at a Glance
 
-<table>
-<tr>
-<td width="50%">
-
 ### 🔐 File fingerprinting
 
 Calculates SHA-256 using chunked reads. Use the hash to identify a file consistently across reports.
-
-</td>
-<td width="50%">
 
 ### 🧭 Signature identification
 
 Recognizes selected signatures associated with formats such as PE, ELF, PNG, JPEG, GIF, ZIP, and PDF.
 
-</td>
-</tr>
-<tr>
-<td>
+Signature matches are hints, not proof that a file is valid.
 
 ### 🔤 Printable string extraction
 
 Extracts printable ASCII sequences with configurable minimum length and a maximum result count.
 
-</td>
-<td>
-
 ### 📈 Entropy estimation
 
 Calculates Shannon entropy in bits per byte, from 0 to 8, as one signal for further investigation.
 
-</td>
-</tr>
-<tr>
-<td>
-
 ### 🪟 Windows PE inspection
 
-Reads basic PE/COFF header fields, including machine architecture, section count, executable characteristics, and DLL status.
+Reads selected PE/COFF header fields, including machine architecture, section count, executable characteristics, and DLL status.
 
-</td>
-<td>
+Available per-section metadata includes:
+
+- Section name
+- Virtual address and virtual size
+- Raw file offset and raw size
+- Readable, writable, and executable characteristics
+
+PE inspection covers selected structures; it is not a complete PE parser.
 
 ### 📄 Structured reporting
 
 Uses Pydantic models and JSON serialization to make analysis results easier to inspect and integrate into later workflows.
 
-</td>
-</tr>
-<tr>
-<td>
+### 📁 Batch analysis
+
+Analyzes files in a directory, optionally including subdirectories, and produces a JSON report containing individual results and errors.
 
 ### 🧪 Automated quality checks
 
 Uses pytest for regression tests and Ruff for linting, with GitHub Actions for continuous integration.
 
-</td>
-<td>
-
 ### 🛡️ Read-only design
 
-Does not intentionally execute, modify, unpack, or patch the inspected file.
-
-</td>
-</tr>
-</table>
+The analyzer is designed not to execute or modify inspected files. This is not a security sandbox.
 
 ---
 
@@ -161,18 +136,24 @@ Does not intentionally execute, modify, unpack, or patch the inspected file.
 
 **Requirements:** Python 3.11 or later, Git, and Windows, macOS, or Linux.
 
-On Windows, open Command Prompt in the project directory:
+On Windows, open a terminal in the project directory.
 
-```cmd
+Create a virtual environment:
+
+```powershell
 python -m venv .venv
-.venv\Scripts\activate
-python -m pip install -e ".[dev]"
 ```
 
-For PowerShell activation, use:
+Activate it in PowerShell:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
+```
+
+Install the project and development dependencies:
+
+```powershell
+python -m pip install -e ".[dev]"
 ```
 
 ### 2. Choose your investigation mode
@@ -182,7 +163,7 @@ For PowerShell activation, use:
 
 Get a quick overview of a file.
 
-```cmd
+```powershell
 re-intel summary sample.txt
 ```
 
@@ -195,17 +176,17 @@ The summary displays the file path, size, extension, SHA-256, signature hint, en
 
 Generate structured output for inspection, archiving, or downstream processing.
 
-```cmd
-re-intel inspect sample.txt
+```powershell
+re-intel inspect sample.exe
 ```
 
 Save the report to a file:
 
-```cmd
-re-intel inspect sample.txt --output report.json
+```powershell
+re-intel inspect sample.exe --output report.json
 ```
 
-A simplified example of the report structure:
+A simplified illustrative report:
 
 ```json
 {
@@ -220,12 +201,24 @@ A simplified example of the report structure:
     "machine": "x64",
     "section_count": 3,
     "is_dll": false,
-    "is_executable": true
+    "is_executable": true,
+    "sections": [
+      {
+        "name": ".text",
+        "virtual_address": 4096,
+        "virtual_size": 512,
+        "raw_offset": 1024,
+        "raw_size": 512,
+        "readable": true,
+        "writable": false,
+        "executable": true
+      }
+    ]
   }
 }
 ```
 
-*Illustrative structure only. The values are examples, not results from a real executable.*
+*Illustrative structure only. Values are examples, not results from a real executable. Section property names should match the installed version of the project's result model.*
 
 </details>
 
@@ -234,19 +227,19 @@ A simplified example of the report structure:
 
 Inspect readable ASCII sequences without opening the file in an editor.
 
-```cmd
+```powershell
 re-intel strings sample.txt
 ```
 
 Set the minimum string length:
 
-```cmd
+```powershell
 re-intel strings sample.txt --min-length 8
 ```
 
 Limit the number of extracted strings:
 
-```cmd
+```powershell
 re-intel strings sample.txt --max-strings 100
 ```
 
@@ -255,23 +248,22 @@ re-intel strings sample.txt --max-strings 100
 <details>
 <summary><strong>📁 Mode 4 — Batch file analysis</strong></summary>
 
-Analyze multiple files in a directory and combine the per-file results into one JSON report.
+Analyze files directly inside a directory and combine their results into one JSON report.
 
-Analyze files directly inside a directory:
-
-```cmd
+```powershell
 re-intel batch examples/fixtures --output examples/reports/batch-report.json
 ```
 
 Include files in subdirectories:
 
-```cmd
+```powershell
 re-intel batch examples/fixtures --recursive --output examples/reports/batch-report.json
 ```
 
 The report records the generation timestamp, input directory, whether recursive discovery was enabled, the number of files discovered, successful and failed analyses, individual results, and per-file errors.
 
 **Exit codes**
+
 - `0` — All discovered files were analyzed successfully.
 - `1` — The batch completed, but one or more files could not be analyzed.
 - `2` — The input directory is missing or is not a directory.
@@ -284,23 +276,29 @@ The output report is excluded from the input file list when it is inside the dir
 
 ## 🧪 Quality Assurance
 
-The project includes automated tests for file analysis, result models, and CLI behavior—including batch report generation, invalid-directory handling, and per-file errors.
+The project includes automated tests for file analysis, result models, and CLI behavior, including batch report generation, invalid-directory handling, and per-file errors.
 
 Run the tests:
 
-```cmd
-python -m pytest -v
+```powershell
+python -m pytest -q
 ```
 
 Check code quality:
 
-```cmd
-python -m ruff check src tests
+```powershell
+python -m ruff check .
 ```
 
-Run both before committing changes. GitHub Actions runs the configured CI workflow on pushes and pull requests.
+Check the Git diff for whitespace errors:
 
-**Current development milestone:** The latest recorded local run passed 32 tests, and Ruff reported no issues. Rerun the commands above after changes to verify the current working tree.
+```powershell
+git diff --check
+```
+
+GitHub Actions runs the configured CI workflow on pushes and pull requests.
+
+**Verification note:** A previous local run passed 47 tests. The file-modification regression test has since failed intermittently on Windows and remains to be resolved before claiming the current working tree is fully verified.
 
 ---
 
@@ -364,11 +362,12 @@ reverse-engineering-intelligence/
 This project is a **lightweight static inspection and triage toolkit**, not a complete reverse-engineering suite or malware detector.
 
 - File-signature matching is heuristic and does not fully validate a file format.
-- PE inspection reads selected header fields; it is not a complete PE parser.
-- A detected PE signature does not guarantee that the file is valid or safe.
+- PE inspection reads selected header and section fields; it is not a complete PE parser.
+- A detected PE signature does not guarantee that a file is valid or safe.
 - ASCII extraction does not cover all Unicode strings, encodings, or binary structures.
 - High entropy does not prove that a file is encrypted, compressed, or malicious.
-- Read-only behavior is an application design goal, not a security sandbox. Do not assume the tool is immune to every malformed-file or resource-exhaustion risk.
+- Read-only behavior is an application design goal, not a security sandbox.
+- Malformed files can still present parsing and resource-exhaustion risks.
 
 Only inspect files you own or have permission to analyze. Treat file contents and extracted strings as untrusted data.
 
@@ -376,9 +375,10 @@ Only inspect files you own or have permission to analyze. Treat file contents an
 
 ## 🛣️ The Road Ahead
 
-Potential future milestones for this project:
+Potential future milestones:
 
-- [ ] Add stronger PE validation and optional-header details.
+- [ ] Expand PE validation and optional-header analysis.
+- [ ] Add import-table analysis.
 - [ ] Add configurable report schemas and machine-readable analysis summaries.
 - [ ] Add more file-format fixtures and malformed-input tests.
 - [ ] Expand resource-use controls and test additional large-file edge cases.

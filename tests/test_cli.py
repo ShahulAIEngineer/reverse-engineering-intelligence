@@ -9,6 +9,7 @@ import pytest
 from re_intel.cli import main
 from re_intel.models import (
     FileAnalysisResult,
+    PEExportSymbol,
     PEImportModule,
     PEImportSymbol,
     PEMetadata,
@@ -19,6 +20,51 @@ def invoke_cli(monkeypatch, arguments: list[str]) -> None:
     """Run the CLI with supplied arguments."""
     monkeypatch.setattr("sys.argv", ["re-intel", *arguments])
     main()
+
+
+
+
+def test_summary_displays_pe_export_table(tmp_path, monkeypatch, capsys):
+    """Summary output should show named and forwarded PE exports."""
+    sample = tmp_path / "sample.dll"
+    sample.write_bytes(b"synthetic PE export test target")
+    result = FileAnalysisResult(
+        path=str(sample),
+        name=sample.name,
+        extension=".dll",
+        size_bytes=sample.stat().st_size,
+        sha256="b" * 64,
+        signature="Windows PE/DOS executable header (signature hint)",
+        entropy_bits_per_byte=4.0,
+        printable_strings=[],
+        pe_metadata=PEMetadata(
+            machine="x64",
+            section_count=1,
+            is_dll=True,
+            is_executable=False,
+            export_table_status="parsed",
+            exports=[
+                PEExportSymbol(name="DemoExport", ordinal=1, address_rva=0x1100),
+                PEExportSymbol(
+                    name=None,
+                    ordinal=2,
+                    address_rva=0x1058,
+                    forwarder="KERNEL32.Sleep",
+                ),
+            ],
+        ),
+    )
+    monkeypatch.setattr("re_intel.cli.analyze_file", lambda *args, **kwargs: result)
+
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(monkeypatch, ["summary", str(sample)])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "PE export table" in output
+    assert "PE exported symbols" in output
+    assert "DemoExport" in output
+    assert "KERNEL32.Sleep" in output
 
 
 def test_summary_displays_pe_import_table(tmp_path, monkeypatch, capsys):

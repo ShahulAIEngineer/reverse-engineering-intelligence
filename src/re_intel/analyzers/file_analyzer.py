@@ -9,6 +9,7 @@ from typing import Literal
 
 from re_intel.models import (
     FileAnalysisResult,
+    PEExportSymbol,
     PEImportModule,
     PEImportSymbol,
     PEMetadata,
@@ -21,7 +22,8 @@ DEFAULT_MAX_FILE_SIZE_MB = 100
 BYTES_PER_MIB = 1024 * 1024
 MAX_PE_IMPORT_MODULES = 512
 MAX_PE_IMPORT_SYMBOLS = 10_000
-MAX_PE_IMPORT_STRING_LENGTH = 4096
+MAX_PE_EXPORTS = 20_000
+MAX_PE_STRING_LENGTH = 4096
 
 SIGNATURES = (
     (b"MZ", "Windows PE/DOS executable header (signature hint)"),
@@ -118,7 +120,7 @@ def _read_ascii_string_at_rva(
         return None
 
     file_offset, available = span
-    read_limit = min(available, MAX_PE_IMPORT_STRING_LENGTH + 1)
+    read_limit = min(available, MAX_PE_STRING_LENGTH + 1)
     file_handle.seek(file_offset)
     data = file_handle.read(read_limit)
     terminator = data.find(b"\x00")
@@ -294,6 +296,191 @@ def _extract_pe_imports(
     return [], "malformed"
 
 
+
+
+def _read_rva_bytes_at_rva(
+    file_handle,
+    rva: int,
+    size: int,
+    *,
+    sections: list[PESection],
+    file_size: int,
+    size_of_headers: int,
+) -> bytes | None:
+    """Read a fixed-size structure only when its entire span is file-backed."""
+    if size < 0:
+        return None
+    if size == 0:
+        return b""
+
+    span = _rva_to_file_span(
+        rva,
+        sections=sections,
+        file_size=file_size,
+        size_of_headers=size_of_headers,
+    )
+    if span is None or span[1] < size:
+        return None
+
+    file_handle.seek(span[0])
+    data = file_handle.read(size)
+    return data if len(data) == size else None
+
+
+def _extract_pe_exports(
+    file_handle,
+    *,
+    optional_header: bytes,
+    optional_magic: int,
+    sections: list[PESection],
+    file_size: int,
+    size_of_headers: int,
+) -> tuple[list[PEExportSymbol], Literal["not_present", "parsed", "malformed"]]:
+    """Parse a bounded PE export directory, including forwarders and ordinal-only exports."""
+    count_offset = 92 if optional_magic == 0x010B else 108
+    directories_offset = 96 if optional_magic == 0x010B else 112
+
+    if len(optional_header) < count_offset + 4:
+        return [], "malformed"
+    directory_count = struct.unpack_from("<I", optional_header, count_offset)[0]
+    if directory_count == 0:
+        return [], "not_present"
+    if len(optional_header) < directories_offset + 8:
+        return [], "malformed"
+
+    export_rva, export_size = struct.unpack_from("<II", optional_header, directories_offset)
+    if export_rva == 0 and export_size == 0:
+        return [], "not_present"
+    if export_rva == 0 or export_size < 40:
+        return [], "malformed"
+
+    directory_data = _read_rva_bytes_at_rva(
+        file_handle,
+        export_rva,
+        40,
+        sections=sections,
+        file_size=file_size,
+        size_of_headers=size_of_headers,
+    )
+    if directory_data is None:
+        return [], "malformed"
+
+    (
+        _,
+        _,
+        _,
+        _,
+        _,
+        ordinal_base,
+        function_count,
+        name_count,
+        functions_rva,
+        names_rva,
+        ordinals_rva,
+    ) = struct.unpack("<IIHHIIIIIII", directory_data)
+
+    if function_count > MAX_PE_EXPORTS or name_count > MAX_PE_EXPORTS:
+        return [], "malformed"
+    if function_count and functions_rva == 0:
+        return [], "malformed"
+    if name_count and (function_count == 0 or names_rva == 0 or ordinals_rva == 0):
+        return [], "malformed"
+
+    functions_data = _read_rva_bytes_at_rva(
+        file_handle,
+        functions_rva,
+        function_count * 4,
+        sections=sections,
+        file_size=file_size,
+        size_of_headers=size_of_headers,
+    )
+    if functions_data is None:
+        return [], "malformed"
+
+    names_data = _read_rva_bytes_at_rva(
+        file_handle,
+        names_rva,
+        name_count * 4,
+        sections=sections,
+        file_size=file_size,
+        size_of_headers=size_of_headers,
+    )
+    ordinals_data = _read_rva_bytes_at_rva(
+        file_handle,
+        ordinals_rva,
+        name_count * 2,
+        sections=sections,
+        file_size=file_size,
+        size_of_headers=size_of_headers,
+    )
+    if names_data is None or ordinals_data is None:
+        return [], "malformed"
+
+    names_by_index: dict[int, list[str]] = {}
+    for index in range(name_count):
+        name_rva = struct.unpack_from("<I", names_data, index * 4)[0]
+        function_index = struct.unpack_from("<H", ordinals_data, index * 2)[0]
+        if name_rva == 0 or function_index >= function_count:
+            return [], "malformed"
+
+        export_name = _read_ascii_string_at_rva(
+            file_handle,
+            name_rva,
+            sections=sections,
+            file_size=file_size,
+            size_of_headers=size_of_headers,
+        )
+        if export_name is None:
+            return [], "malformed"
+        names_by_index.setdefault(function_index, []).append(export_name)
+
+    exports: list[PEExportSymbol] = []
+    export_end = export_rva + export_size
+    for function_index in range(function_count):
+        function_rva = struct.unpack_from("<I", functions_data, function_index * 4)[0]
+        if function_rva == 0:
+            continue
+
+        ordinal = ordinal_base + function_index
+        if ordinal > 0xFFFFFFFF:
+            return [], "malformed"
+
+        forwarder = None
+        if export_rva <= function_rva < export_end:
+            forwarder = _read_ascii_string_at_rva(
+                file_handle,
+                function_rva,
+                sections=sections,
+                file_size=file_size,
+                size_of_headers=size_of_headers,
+            )
+            if forwarder is None:
+                return [], "malformed"
+
+        exported_names = names_by_index.get(function_index, [])
+        if exported_names:
+            exports.extend(
+                PEExportSymbol(
+                    name=export_name,
+                    ordinal=ordinal,
+                    address_rva=function_rva,
+                    forwarder=forwarder,
+                )
+                for export_name in exported_names
+            )
+        else:
+            exports.append(
+                PEExportSymbol(
+                    name=None,
+                    ordinal=ordinal,
+                    address_rva=function_rva,
+                    forwarder=forwarder,
+                )
+            )
+
+    return exports, "parsed"
+
+
 def _extract_pe_metadata(path: Path) -> PEMetadata | None:
     """Extract basic PE metadata, returning None for malformed/non-PE files."""
     try:
@@ -413,6 +600,14 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                 file_size=file_size,
                 size_of_headers=size_of_headers,
             )
+            exports, export_table_status = _extract_pe_exports(
+                file_handle,
+                optional_header=optional_header,
+                optional_magic=optional_magic,
+                sections=sections,
+                file_size=file_size,
+                size_of_headers=size_of_headers,
+            )
 
             return PEMetadata(
                 machine=PE_MACHINES.get(machine, f"Unknown (0x{machine:04X})"),
@@ -422,6 +617,8 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
                 sections=sections,
                 import_table_status=import_table_status,
                 imports=imports,
+                export_table_status=export_table_status,
+                exports=exports,
             )
 
     except (OSError, struct.error, ValueError):

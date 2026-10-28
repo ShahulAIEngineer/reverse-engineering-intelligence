@@ -112,6 +112,8 @@ def _summary(args: argparse.Namespace) -> int:
             "PE imported symbols",
             str(sum(len(module.symbols) for module in pe.imports)),
         )
+        table.add_row("PE export table", pe.export_table_status.replace("_", " "))
+        table.add_row("PE exported symbols", str(len(pe.exports)))
 
         if pe.sections:
             section_table = Table(title="PE sections (details)")
@@ -150,6 +152,28 @@ def _summary(args: argparse.Namespace) -> int:
                     displayed_symbols.append(f"... +{len(module.symbols) - 10} more")
                 import_table.add_row(module.name, ", ".join(displayed_symbols) or "(none)")
             console.print(import_table)
+
+        if pe.exports:
+            export_table = Table(title="PE exports")
+            export_table.add_column("Ordinal", justify="right")
+            export_table.add_column("Name")
+            export_table.add_column("Address RVA")
+            export_table.add_column("Forwarder")
+            for export in pe.exports[:20]:
+                export_table.add_row(
+                    str(export.ordinal),
+                    export.name or "(ordinal only)",
+                    f"0x{export.address_rva:08X}",
+                    export.forwarder or "",
+                )
+            if len(pe.exports) > 20:
+                export_table.add_row(
+                    "...",
+                    f"+{len(pe.exports) - 20} more",
+                    "",
+                    "",
+                )
+            console.print(export_table)
     else:
         table.add_row("PE metadata", "Not detected")
 

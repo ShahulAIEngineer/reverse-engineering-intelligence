@@ -10,7 +10,12 @@ import importlib.util
 
 import pytest
 
-from re_intel.analyzers.yara_scanner import scan_file_with_yara
+
+def _scan_file_with_yara(*args, **kwargs):
+    """Load the optional scanner only when an integration test calls it."""
+    from re_intel.analyzers.yara_scanner import scan_file_with_yara
+
+    return scan_file_with_yara(*args, **kwargs)
 
 
 pytestmark = pytest.mark.skipif(
@@ -44,7 +49,7 @@ def test_scan_reports_matching_rule_and_hashes(tmp_path) -> None:
     target.write_bytes(payload)
     _write_rule(rules)
 
-    report = scan_file_with_yara(target, rules)
+    report = _scan_file_with_yara(target, rules)
 
     assert report.size_bytes == len(payload)
     assert report.sha256 == hashlib.sha256(payload).hexdigest()

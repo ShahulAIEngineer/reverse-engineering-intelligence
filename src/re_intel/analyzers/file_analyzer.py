@@ -6,7 +6,7 @@ import struct
 from collections import Counter
 from pathlib import Path
 
-from re_intel.models import FileAnalysisResult, PEMetadata
+from re_intel.models import FileAnalysisResult, PEMetadata, PESection
 
 CHUNK_SIZE = 1024 * 1024
 PE_OFFSET_LOCATION = 0x3C
@@ -137,11 +137,39 @@ def _extract_pe_metadata(path: Path) -> PEMetadata | None:
             if section_table_offset + section_table_size > file_size:
                 return None
 
+            sections: list[PESection] = []
+            for section_index in range(section_count):
+                entry_offset = section_table_offset + section_index * 40
+                file_handle.seek(entry_offset)
+                section_entry = file_handle.read(40)
+                if len(section_entry) != 40:
+                    return None
+
+                raw_name = section_entry[0:8].split(b"\x00", 1)[0]
+                section_name = raw_name.decode("ascii", errors="replace") or "<empty>"
+                virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from(
+                    "<IIII", section_entry, 8
+                )
+                section_characteristics = struct.unpack_from("<I", section_entry, 36)[0]
+                sections.append(
+                    PESection(
+                        name=section_name,
+                        virtual_size=virtual_size,
+                        virtual_address=virtual_address,
+                        raw_size=raw_size,
+                        raw_offset=raw_offset,
+                        readable=bool(section_characteristics & 0x40000000),
+                        writable=bool(section_characteristics & 0x80000000),
+                        executable=bool(section_characteristics & 0x20000000),
+                    )
+                )
+
             return PEMetadata(
                 machine=PE_MACHINES.get(machine, f"Unknown (0x{machine:04X})"),
                 section_count=section_count,
                 is_dll=bool(characteristics & 0x2000),
                 is_executable=bool(characteristics & 0x0002),
+                sections=sections,
             )
 
     except (OSError, struct.error, ValueError):

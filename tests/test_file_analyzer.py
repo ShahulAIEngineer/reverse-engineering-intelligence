@@ -177,6 +177,45 @@ def create_test_pe(
 
 
 
+def test_extracts_pe_section_metadata(tmp_path):
+    sample = tmp_path / "sections.exe"
+    create_test_pe(sample, machine=0x8664, section_count=1)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_size = struct.unpack_from("<H", data, pe_offset + 4 + 16)[0]
+    section_offset = pe_offset + 24 + optional_size
+
+    data[section_offset:section_offset + 8] = b".text\x00\x00\x00"
+    struct.pack_into("<IIII", data, section_offset + 8, 0x120, 0x1000, 0x200, 0x400)
+    struct.pack_into("<I", data, section_offset + 36, 0x60000020)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+    assert result.pe_metadata is not None
+    assert len(result.pe_metadata.sections) == 1
+    section = result.pe_metadata.sections[0]
+    assert section.name == ".text"
+    assert section.virtual_size == 0x120
+    assert section.virtual_address == 0x1000
+    assert section.raw_size == 0x200
+    assert section.raw_offset == 0x400
+    assert section.readable is True
+    assert section.writable is False
+    assert section.executable is True
+
+
+def test_pe_sections_default_to_empty_for_model_compatibility():
+    from re_intel.models import PEMetadata
+
+    metadata = PEMetadata(
+        machine="x64",
+        section_count=3,
+        is_dll=False,
+        is_executable=True,
+    )
+    assert metadata.sections == []
+
+
 def test_extracts_x64_pe_metadata(tmp_path):
     sample = tmp_path / "sample.exe"
     create_test_pe(sample, machine=0x8664, section_count=4)

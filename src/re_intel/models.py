@@ -4,6 +4,17 @@
 from pydantic import BaseModel, Field
 
 
+class PESection(BaseModel):
+    name: str = Field(min_length=1, max_length=8)
+    virtual_size: int = Field(ge=0)
+    virtual_address: int = Field(ge=0)
+    raw_size: int = Field(ge=0)
+    raw_offset: int = Field(ge=0)
+    readable: bool
+    writable: bool
+    executable: bool
+
+
 class PEMetadata(BaseModel):
     """Basic metadata parsed from a Windows PE header."""
 
@@ -11,6 +22,7 @@ class PEMetadata(BaseModel):
     section_count: int = Field(ge=0)
     is_dll: bool
     is_executable: bool
+    sections: list[PESection] = Field(default_factory=list)
 
 
 class FileAnalysisResult(BaseModel):

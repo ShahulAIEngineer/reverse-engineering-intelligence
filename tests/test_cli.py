@@ -9,6 +9,8 @@ import pytest
 from re_intel.cli import main
 from re_intel.models import (
     FileAnalysisResult,
+    PECertificateEntry,
+    PECertificateTable,
     PEExportSymbol,
     PEImportModule,
     PEImportSymbol,
@@ -264,3 +266,58 @@ def test_inspect_rejects_file_over_configured_size(
         )
 
     assert exc_info.value.code == 2
+
+
+
+def test_summary_displays_pe_certificate_table_and_overlay(
+    tmp_path, monkeypatch, capsys
+):
+    """Summary output should include certificate directory and overlay metadata."""
+    sample = tmp_path / "sample.exe"
+    sample.write_bytes(b"synthetic PE certificate and overlay target")
+    result = FileAnalysisResult(
+        path=str(sample),
+        name=sample.name,
+        extension=".exe",
+        size_bytes=sample.stat().st_size,
+        sha256="c" * 64,
+        signature="Windows PE/DOS executable header (signature hint)",
+        entropy_bits_per_byte=4.0,
+        printable_strings=[],
+        pe_metadata=PEMetadata(
+            machine="x64",
+            section_count=1,
+            is_dll=False,
+            is_executable=True,
+            certificate_table=PECertificateTable(
+                status="parsed",
+                file_offset=0x400,
+                size=16,
+                entries=[
+                    PECertificateEntry(
+                        file_offset=0x400,
+                        length=12,
+                        revision=0x0200,
+                        certificate_type=0x0002,
+                        certificate_type_name="PKCS #7 SignedData",
+                    )
+                ],
+            ),
+            overlay_status="present",
+            overlay_offset=0x200,
+            overlay_size=528,
+        ),
+    )
+    monkeypatch.setattr("re_intel.cli.analyze_file", lambda *args, **kwargs: result)
+
+    with pytest.raises(SystemExit) as exc_info:
+        invoke_cli(monkeypatch, ["summary", str(sample)])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "PE certificate table" in output
+    assert "PE certificate entries" in output
+    assert "0x00000400" in output
+    assert "PKCS #7 SignedData" in output
+    assert "PE overlay" in output
+    assert "present" in output

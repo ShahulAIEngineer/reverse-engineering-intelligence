@@ -46,6 +46,29 @@ class PEExportSymbol(BaseModel):
     forwarder: str | None = Field(default=None, min_length=1, max_length=4096)
 
 
+class PECertificateEntry(BaseModel):
+    """Structural metadata for one WIN_CERTIFICATE record."""
+
+    file_offset: int = Field(ge=0)
+    length: int = Field(ge=8, le=0xFFFFFFFF)
+    revision: int = Field(ge=0, le=0xFFFF)
+    certificate_type: int = Field(ge=0, le=0xFFFF)
+    certificate_type_name: str = Field(min_length=1, max_length=96)
+
+
+class PECertificateTable(BaseModel):
+    """Structural metadata for the PE security directory certificate table.
+
+    A parsed status means the record layout was bounded and readable. It does
+    not mean that an Authenticode signature was cryptographically verified.
+    """
+
+    status: Literal["not_present", "parsed", "malformed"] = "not_present"
+    file_offset: int | None = Field(default=None, ge=0)
+    size: int = Field(default=0, ge=0)
+    entries: list[PECertificateEntry] = Field(default_factory=list)
+
+
 class PEOptionalHeader(BaseModel):
     """Selected, validated fields from a PE32 or PE32+ optional header."""
 
@@ -74,6 +97,10 @@ class PEMetadata(BaseModel):
     export_table_status: Literal["not_present", "parsed", "malformed"] = "not_present"
     exports: list[PEExportSymbol] = Field(default_factory=list)
     optional_header: PEOptionalHeader | None = None
+    certificate_table: PECertificateTable = Field(default_factory=PECertificateTable)
+    overlay_status: Literal["not_present", "present", "uncertain"] = "not_present"
+    overlay_offset: int | None = Field(default=None, ge=0)
+    overlay_size: int = Field(default=0, ge=0)
 
 
 class FileAnalysisResult(BaseModel):

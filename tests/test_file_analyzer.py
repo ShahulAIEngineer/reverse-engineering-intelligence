@@ -851,3 +851,147 @@ def test_rejects_physically_truncated_pe_optional_header(tmp_path):
     result = analyze_file(sample)
 
     assert result.pe_metadata is None
+
+
+
+def create_test_pe_with_certificate_table(path, *, machine=0x8664):
+    """Create a PE with one structurally valid WIN_CERTIFICATE record."""
+    create_test_pe(path, machine=machine, section_count=1)
+    data = bytearray(path.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_offset = pe_offset + 24
+    optional_magic = struct.unpack_from("<H", data, optional_offset)[0]
+    is_64bit = optional_magic == 0x020B
+    directory_count_offset = 108 if is_64bit else 92
+    directory_table_offset = 112 if is_64bit else 96
+
+    # One 12-byte record plus four bytes of 8-byte alignment padding.
+    certificate_offset = 0x400
+    certificate_record = struct.pack("<IHH", 12, 0x0200, 0x0002) + b"TEST"
+    certificate_record += b"\x00" * 4
+    if len(data) < certificate_offset + len(certificate_record):
+        data.extend(b"\x00" * (certificate_offset + len(certificate_record) - len(data)))
+    data[certificate_offset : certificate_offset + len(certificate_record)] = (
+        certificate_record
+    )
+
+    struct.pack_into("<I", data, optional_offset + 60, 0x200)
+    struct.pack_into("<I", data, optional_offset + directory_count_offset, 16)
+    struct.pack_into(
+        "<II",
+        data,
+        optional_offset + directory_table_offset + 4 * 8,
+        certificate_offset,
+        len(certificate_record),
+    )
+    path.write_bytes(data)
+
+
+@pytest.mark.parametrize("machine", [0x014C, 0x8664])
+def test_extracts_pe_certificate_table_metadata(tmp_path, machine):
+    sample = tmp_path / "signed.exe"
+    create_test_pe_with_certificate_table(sample, machine=machine)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    table = result.pe_metadata.certificate_table
+    assert table.status == "parsed"
+    assert table.file_offset == 0x400
+    assert table.size == 16
+    assert len(table.entries) == 1
+    entry = table.entries[0]
+    assert entry.file_offset == 0x400
+    assert entry.length == 12
+    assert entry.revision == 0x0200
+    assert entry.certificate_type == 0x0002
+    assert entry.certificate_type_name == "PKCS #7 SignedData"
+
+
+def test_reports_absent_pe_certificate_table(tmp_path):
+    sample = tmp_path / "unsigned.exe"
+    create_test_pe(sample)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.certificate_table.status == "not_present"
+    assert result.pe_metadata.certificate_table.entries == []
+
+
+def test_reports_malformed_pe_certificate_directory_range(tmp_path):
+    sample = tmp_path / "bad_certificate_directory.exe"
+    create_test_pe_with_certificate_table(sample)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_offset = pe_offset + 24
+    directory_table_offset = 112
+    struct.pack_into(
+        "<II",
+        data,
+        optional_offset + directory_table_offset + 4 * 8,
+        0xFFFFFFF8,
+        16,
+    )
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.certificate_table.status == "malformed"
+    assert result.pe_metadata.certificate_table.entries == []
+
+
+def test_reports_malformed_pe_certificate_record_length(tmp_path):
+    sample = tmp_path / "bad_certificate_record.exe"
+    create_test_pe_with_certificate_table(sample)
+    data = bytearray(sample.read_bytes())
+    struct.pack_into("<I", data, 0x400, 4)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.certificate_table.status == "malformed"
+    assert result.pe_metadata.certificate_table.entries == []
+
+
+def test_detects_pe_overlay_after_headers(tmp_path):
+    sample = tmp_path / "overlay.exe"
+    create_test_pe_with_certificate_table(sample)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.overlay_status == "present"
+    assert result.pe_metadata.overlay_offset == 0x200
+    assert result.pe_metadata.overlay_size == sample.stat().st_size - 0x200
+
+
+def test_reports_no_pe_overlay(tmp_path):
+    sample = tmp_path / "no_overlay.exe"
+    create_test_pe(sample, section_count=1)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.overlay_status == "not_present"
+    assert result.pe_metadata.overlay_size == 0
+
+
+def test_marks_pe_overlay_uncertain_for_truncated_section_raw_data(tmp_path):
+    sample = tmp_path / "truncated_section_raw_data.exe"
+    create_test_pe(sample, section_count=1)
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    optional_size = struct.unpack_from("<H", data, pe_offset + 4 + 16)[0]
+    section_offset = pe_offset + 24 + optional_size
+    struct.pack_into("<IIII", data, section_offset + 8, 0x400, 0x1000, 0x400, 0x400)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is not None
+    assert result.pe_metadata.overlay_status == "uncertain"
+    assert result.pe_metadata.overlay_offset is None
+    assert result.pe_metadata.overlay_size == 0

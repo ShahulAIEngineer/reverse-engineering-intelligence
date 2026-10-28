@@ -430,6 +430,58 @@ def test_rejects_undersized_pe_optional_header(
     assert result.pe_metadata is None
 
 
+
+
+def test_rejects_truncated_pe_signature(tmp_path):
+    sample = tmp_path / "truncated_signature.exe"
+    data = bytearray(130)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 128)
+    data[128:130] = b"PE"
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
+def test_rejects_truncated_coff_header(tmp_path):
+    sample = tmp_path / "truncated_coff.exe"
+    data = bytearray(150)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 128)
+    data[128:132] = b"PE\x00\x00"
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
+def test_rejects_optional_header_declared_beyond_file(tmp_path):
+    sample = tmp_path / "optional_header_beyond_file.exe"
+    create_test_pe(sample, machine=0x8664)
+
+    data = bytearray(sample.read_bytes())
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    struct.pack_into("<H", data, pe_offset + 4 + 16, 0xFFFF)
+    sample.write_bytes(data)
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
+def test_rejects_section_table_truncated_by_one_byte(tmp_path):
+    sample = tmp_path / "section_table_truncated_by_one.exe"
+    create_test_pe(sample, machine=0x8664, section_count=1)
+    sample.write_bytes(sample.read_bytes()[:-1])
+
+    result = analyze_file(sample)
+
+    assert result.pe_metadata is None
+
+
 def test_rejects_physically_truncated_pe_optional_header(tmp_path):
     sample = tmp_path / "physically_truncated_optional.exe"
     create_test_pe(sample, machine=0x8664)

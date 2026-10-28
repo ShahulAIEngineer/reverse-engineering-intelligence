@@ -46,6 +46,21 @@ class PEExportSymbol(BaseModel):
     forwarder: str | None = Field(default=None, min_length=1, max_length=4096)
 
 
+class PEOptionalHeader(BaseModel):
+    """Selected, validated fields from a PE32 or PE32+ optional header."""
+
+    format: Literal["PE32", "PE32+"]
+    entry_point_rva: int = Field(ge=0, le=0xFFFFFFFF)
+    image_base: int = Field(ge=0, le=0xFFFFFFFFFFFFFFFF)
+    section_alignment: int = Field(ge=0, le=0xFFFFFFFF)
+    file_alignment: int = Field(ge=0, le=0xFFFFFFFF)
+    size_of_image: int = Field(ge=0, le=0xFFFFFFFF)
+    size_of_headers: int = Field(ge=0, le=0xFFFFFFFF)
+    subsystem: int = Field(ge=0, le=0xFFFF)
+    subsystem_name: str = Field(min_length=1, max_length=64)
+    dll_characteristics: int = Field(ge=0, le=0xFFFF)
+
+
 class PEMetadata(BaseModel):
     """Basic metadata parsed from a Windows PE header."""
 
@@ -58,6 +73,7 @@ class PEMetadata(BaseModel):
     imports: list[PEImportModule] = Field(default_factory=list)
     export_table_status: Literal["not_present", "parsed", "malformed"] = "not_present"
     exports: list[PEExportSymbol] = Field(default_factory=list)
+    optional_header: PEOptionalHeader | None = None
 
 
 class FileAnalysisResult(BaseModel):

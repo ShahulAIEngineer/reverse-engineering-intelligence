@@ -7,8 +7,8 @@
 3. The analyzer reads file content in bounded chunks to calculate SHA-256 and Shannon entropy.
 4. It examines leading bytes for a heuristic signature hint and extracts printable ASCII strings.
 5. For recognized Windows PE candidates, the analyzer validates selected header boundaries and extracts basic PE metadata.
-6. PE metadata includes the machine architecture, section count, executable and DLL flags, section details, and import/export table analysis.
-7. Section metadata includes section names, virtual addresses and sizes, raw file offsets and sizes, and read/write/execute characteristics.
+6. PE metadata includes the machine architecture, selected optional-header fields, section count, executable and DLL flags, section details, and import/export table analysis.
+7. Selected optional-header fields include PE32/PE32+ format, entry-point RVA, image base, section and file alignment, image/header sizes, subsystem, and DLL characteristics. Section metadata includes section names, virtual addresses and sizes, raw file offsets and sizes, and read/write/execute characteristics.
 8. Import-table parsing maps RVAs through headers or section raw data and extracts imported DLL names plus imports by name or ordinal. Export-table parsing extracts named and ordinal-only exports and forwarded exports.
 9. Both table parsers use bounded counts and strings and report absent or malformed tables explicitly.
 10. Pydantic models validate the structured analysis result.

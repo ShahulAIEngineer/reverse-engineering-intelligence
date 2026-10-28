@@ -101,7 +101,7 @@ Calculates Shannon entropy in bits per byte, from 0 to 8, as one signal for furt
 
 ### 🪟 Windows PE inspection
 
-Reads selected PE/COFF header fields, section permissions, import tables, and export tables. It reports imported DLLs and symbols by name or ordinal, named and ordinal-only exports, forwarded exports, and explicit malformed-table status.
+Reads selected PE/COFF header fields, entry point, image base, alignments, image/header sizes, subsystem, DLL characteristics, section permissions, import tables, and export tables. It reports named and ordinal imports/exports, forwarded exports, and explicit malformed-table status.
 
 Available per-section metadata includes:
 
@@ -200,6 +200,18 @@ A simplified illustrative report:
   "pe_metadata": {
     "machine": "x64",
     "section_count": 3,
+    "optional_header": {
+      "format": "PE32+",
+      "entry_point_rva": 4660,
+      "image_base": 5368709120,
+      "section_alignment": 4096,
+      "file_alignment": 512,
+      "size_of_image": 12288,
+      "size_of_headers": 1024,
+      "subsystem": 2,
+      "subsystem_name": "Windows GUI",
+      "dll_characteristics": 33120
+    },
     "is_dll": false,
     "is_executable": true,
     "import_table_status": "parsed",
@@ -403,7 +415,7 @@ Only inspect files you own or have permission to analyze. Treat file contents an
 Potential future milestones:
 
 - [ ] Expand PE validation and optional-header analysis.
-- [ ] Expand optional-header and PE debug-directory analysis.
+- [ ] Add PE debug-directory and certificate metadata.
 - [ ] Add configurable report schemas and machine-readable analysis summaries.
 - [ ] Add more file-format fixtures and malformed-input tests.
 - [ ] Expand resource-use controls and test additional large-file edge cases.
